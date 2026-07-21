@@ -692,6 +692,16 @@
 	position: relative;
 }
 
+/* Apply form: Annual Return financial year/turnover repeater */
+.bizupkeep-filing-block {
+	background: #ffffff;
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	padding: 18px 20px;
+	margin-bottom: 14px;
+	position: relative;
+}
+
 .bizupkeep-repeater-remove {
 	background: transparent;
 	color: #b91c1c;

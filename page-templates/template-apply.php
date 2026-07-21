@@ -112,8 +112,8 @@ get_header();
 					<h3><?php esc_html_e( 'Directors', 'bizupkeep-astra-child' ); ?></h3>
 					<p class="bizupkeep-field-hint"><?php esc_html_e( 'At least one director is required. Up to 10 allowed.', 'bizupkeep-astra-child' ); ?></p>
 
-					<div class="bizupkeep-director-repeater" data-repeater="new-director" data-max="10" data-template-id="bizupkeep-director-template">
-						<div class="bizupkeep-director-blocks">
+					<div class="bizupkeep-repeater" data-repeater="new-director" data-max="10" data-template-id="bizupkeep-director-template">
+						<div class="bizupkeep-repeater-blocks">
 							<?php bizupkeep_child_render_director_fields( 'director', 0 ); ?>
 						</div>
 						<button type="button" class="bizupkeep-btn bizupkeep-repeater-add"><?php esc_html_e( '+ Add Director', 'bizupkeep-astra-child' ); ?></button>
@@ -193,8 +193,8 @@ get_header();
 
 						<p class="bizupkeep-field-hint"><?php esc_html_e( 'Add new director(s):', 'bizupkeep-astra-child' ); ?></p>
 
-						<div class="bizupkeep-director-repeater" data-repeater="amendment-director" data-max="10" data-template-id="bizupkeep-amendment-director-template">
-							<div class="bizupkeep-director-blocks">
+						<div class="bizupkeep-repeater" data-repeater="amendment-director" data-max="10" data-template-id="bizupkeep-amendment-director-template">
+							<div class="bizupkeep-repeater-blocks">
 								<?php bizupkeep_child_render_director_fields( 'amendment_director', 0 ); ?>
 							</div>
 							<button type="button" class="bizupkeep-btn bizupkeep-repeater-add"><?php esc_html_e( '+ Add Director', 'bizupkeep-astra-child' ); ?></button>
@@ -214,10 +214,19 @@ get_header();
 
 					<?php bizupkeep_child_render_company_picker( 'return', $companies ); ?>
 
-					<p>
-						<label for="bizupkeep-return-year"><?php esc_html_e( 'Financial Year', 'bizupkeep-astra-child' ); ?></label>
-						<input type="number" id="bizupkeep-return-year" name="financial_year" min="2000" max="2100" value="<?php echo esc_attr( gmdate( 'Y' ) ); ?>">
-					</p>
+					<h3><?php esc_html_e( 'Which Financial Year(s)?', 'bizupkeep-astra-child' ); ?></h3>
+					<p class="bizupkeep-field-hint"><?php esc_html_e( 'Behind on more than one year? Add each outstanding year separately - we\'ll quote for all of them together.', 'bizupkeep-astra-child' ); ?></p>
+
+					<div class="bizupkeep-repeater" data-repeater="filing" data-max="10" data-template-id="bizupkeep-filing-template">
+						<div class="bizupkeep-repeater-blocks">
+							<?php bizupkeep_child_render_filing_fields( 'filing', 0 ); ?>
+						</div>
+						<button type="button" class="bizupkeep-btn bizupkeep-repeater-add"><?php esc_html_e( '+ Add Financial Year', 'bizupkeep-astra-child' ); ?></button>
+					</div>
+
+					<template id="bizupkeep-filing-template">
+						<?php bizupkeep_child_render_filing_fields( 'filing', '__INDEX__' ); ?>
+					</template>
 
 				</section>
 

@@ -36,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.14.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.15.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -914,14 +914,17 @@ function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $note
 
 /**
  * Start an Annual Return workflow for one of the client's existing
- * companies and a financial year. Returns false on any failure, per
- * the same public-form-submission convention as the other two submit
- * handlers.
+ * companies, covering one or more outstanding financial years (each
+ * with its own turnover figure - CIPC's filing fee is turnover-banded,
+ * and a client behind on several years files and pays for all of them
+ * in one application rather than separately). Returns false on any
+ * failure, per the same public-form-submission convention as the
+ * other two submit handlers.
  *
  * Unlike Company Registration/Amendment, this does NOT immediately
  * fire ACTION_REQUEST_PAYMENT - the application stays in Created until
  * staff check CIPC and send a quote from the Quality Review screen
- * (see AnnualReturnGuard::guardRequestPayment(), which now requires a
+ * (see AnnualReturnGuard::guardQuoteAmount(), which now requires a
  * quote_amount in context). "Created" is the client-visible "awaiting
  * our review" state for this workflow type - see
  * bizupkeep_child_workflow_status_label().
@@ -937,9 +940,11 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
 		return false;
 	}
 
-	$financial_year = isset( $_POST['financial_year'] ) ? absint( $_POST['financial_year'] ) : 0;
+	$filings = isset( $_POST['filing'] ) && is_array( $_POST['filing'] )
+		? bizupkeep_child_parse_filings_input( $_POST['filing'] )
+		: array();
 
-	if ( $financial_year < 2000 || $financial_year > 2100 ) {
+	if ( array() === $filings ) {
 		return false;
 	}
 
@@ -947,7 +952,7 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
 
 	try {
 		$returns = bizhub()->container()->get( AnnualReturnService::class );
-		$returns->start( $company->getUuid(), $wp_user_id, $financial_year, $metadata );
+		$returns->start( $company->getUuid(), $wp_user_id, $filings, $metadata );
 	} catch ( \Throwable $e ) {
 		return false;
 	}
@@ -1165,6 +1170,49 @@ function bizupkeep_child_parse_directors_input( array $raw ): array {
 	}
 
 	return $directors;
+}
+
+/**
+ * Parse a posted Annual Return filing repeater (e.g. $_POST['filing'],
+ * an indexed array of {financial_year, turnover} blocks) into a clean
+ * list of ['financial_year' => int, 'turnover' => float] pairs, for
+ * AnnualReturnService::start(). Blank rows (no year entered) are
+ * silently skipped, matching bizupkeep_child_parse_directors_input()'s
+ * "an unused '+ Add' block just disappears" behaviour. Rows repeating
+ * a year already seen earlier in the same submission are also
+ * skipped - filing the same year twice in one application doesn't
+ * mean anything, and would otherwise just confuse
+ * AnnualReturnService's duplicate-year check.
+ *
+ * @param array<int,array<string,mixed>> $raw
+ * @return array<int,array{financial_year:int,turnover:float}>
+ */
+function bizupkeep_child_parse_filings_input( array $raw ): array {
+	$raw     = wp_unslash( $raw );
+	$filings = array();
+	$seen_years = array();
+
+	foreach ( $raw as $entry ) {
+		if ( ! is_array( $entry ) ) {
+			continue;
+		}
+
+		$year = absint( $entry['financial_year'] ?? 0 );
+
+		if ( $year < 2000 || $year > 2100 || in_array( $year, $seen_years, true ) ) {
+			continue;
+		}
+
+		$turnover = isset( $entry['turnover'] ) ? (float) $entry['turnover'] : 0.0;
+
+		$seen_years[] = $year;
+		$filings[]    = array(
+			'financial_year' => $year,
+			'turnover'        => max( 0.0, $turnover ),
+		);
+	}
+
+	return $filings;
 }
 
 /**
@@ -1418,6 +1466,33 @@ function bizupkeep_child_render_director_fields( string $prefix, $index ): void 
 			<input type="email" name="<?php echo esc_attr( $base ); ?>[email]">
 		</p>
 		<?php bizupkeep_child_render_address_fields( $base . '[address]' ); ?>
+		<button type="button" class="bizupkeep-btn bizupkeep-repeater-remove"><?php esc_html_e( 'Remove', 'bizupkeep-astra-child' ); ?></button>
+	</div>
+	<?php
+}
+
+/**
+ * Render one Annual Return filing repeater block: financial year +
+ * turnover under "{$prefix}[{$index}][...]", plus a Remove button.
+ * Turnover is asked for because CIPC's Annual Return filing fee is
+ * turnover-banded - staff need it to work out the right quote once
+ * they've checked CIPC (see bizupkeep_child_render_director_fields()'s
+ * docblock for the $index convention this mirrors).
+ *
+ * @param int|string $index
+ */
+function bizupkeep_child_render_filing_fields( string $prefix, $index ): void {
+	$base = sprintf( '%s[%s]', $prefix, $index );
+	?>
+	<div class="bizupkeep-filing-block">
+		<p>
+			<label><?php esc_html_e( 'Financial Year', 'bizupkeep-astra-child' ); ?></label>
+			<input type="number" name="<?php echo esc_attr( $base ); ?>[financial_year]" min="2000" max="2100">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Annual Turnover for that Year (ZAR)', 'bizupkeep-astra-child' ); ?></label>
+			<input type="number" name="<?php echo esc_attr( $base ); ?>[turnover]" min="0" step="0.01">
+		</p>
 		<button type="button" class="bizupkeep-btn bizupkeep-repeater-remove"><?php esc_html_e( 'Remove', 'bizupkeep-astra-child' ); ?></button>
 	</div>
 	<?php
@@ -2498,6 +2573,35 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
 }
 
 /**
+ * List the financial year(s) an Annual Return workflow's metadata
+ * covers, tolerating the old single-`financial_year` shape (from
+ * before one application could cover multiple years) as well as the
+ * current `filings` list - mirrors
+ * AnnualReturnService::filingsFromMetadata()/QualityReviewPage::filingsFromMetadata()
+ * in bizupkeep-workflow, kept separate since this is purely a
+ * client-facing display concern.
+ *
+ * @param array<string,mixed> $metadata
+ * @return array<int,int>
+ */
+function bizupkeep_child_filing_years( array $metadata ): array {
+	if ( isset( $metadata['filings'] ) && is_array( $metadata['filings'] ) ) {
+		return array_map(
+			static function ( $filing ) {
+				return (int) ( is_array( $filing ) ? ( $filing['financial_year'] ?? 0 ) : 0 );
+			},
+			$metadata['filings']
+		);
+	}
+
+	if ( isset( $metadata['financial_year'] ) ) {
+		return array( (int) $metadata['financial_year'] );
+	}
+
+	return array();
+}
+
+/**
  * Build the data the My Applications template needs: one row per
  * application (workflow instance) belonging to the logged-in user's
  * client record, across all three workflow types, with its own status
@@ -2515,7 +2619,7 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
  * the exact staff-quoted amount rather than whatever product the
  * client happens to pick.
  *
- * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string}>
+ * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string,filing_years:string}>
  */
 function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 	$sections = array();
@@ -2538,10 +2642,15 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 		$metadata     = $instance->getMetadata();
 		$quote_amount = null;
 		$quote_notes  = '';
+		$filing_years = '';
 
 		if ( $is_annual_return && isset( $metadata['quote_amount'] ) && is_numeric( $metadata['quote_amount'] ) && (float) $metadata['quote_amount'] > 0 ) {
 			$quote_amount = (float) $metadata['quote_amount'];
 			$quote_notes  = is_string( $metadata['quote_notes'] ?? null ) ? $metadata['quote_notes'] : '';
+		}
+
+		if ( $is_annual_return ) {
+			$filing_years = implode( ', ', bizupkeep_child_filing_years( $metadata ) );
 		}
 
 		$sections[] = array(
@@ -2554,6 +2663,7 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 			'rejection_reason'     => $needs_resubmission ? bizupkeep_child_latest_rejection_reason( $instance ) : '',
 			'quote_amount'         => $quote_amount,
 			'quote_notes'          => $quote_notes,
+			'filing_years'         => $filing_years,
 		);
 	}
 

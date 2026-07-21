@@ -58,7 +58,12 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 				<tbody>
 					<?php foreach ( $sections as $section ) : ?>
 						<tr>
-							<td><?php echo esc_html( $section['workflow_type_label'] ); ?></td>
+							<td>
+								<?php echo esc_html( $section['workflow_type_label'] ); ?>
+								<?php if ( '' !== $section['filing_years'] ) : ?>
+									<br><small><?php echo esc_html( $section['filing_years'] ); ?></small>
+								<?php endif; ?>
+							</td>
 							<td><?php echo esc_html( $section['company_name'] ); ?></td>
 							<td><span class="bizupkeep-status-pill"><?php echo esc_html( $section['status_label'] ); ?></span></td>
 							<td>

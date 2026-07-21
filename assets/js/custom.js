@@ -73,18 +73,19 @@
 	 * .bizupkeep-apply-section, the amendment_types[] checkboxes
 	 * show/hide their matching .bizupkeep-amendment-subsection, the
 	 * company picker shows the matching company's existing-directors
-	 * list, and each .bizupkeep-director-repeater gets a working
-	 * "+ Add Director" / "Remove" repeater. All four behaviours are
-	 * no-ops (the querySelectorAll calls just return empty lists) on
-	 * any other page, so this is safe to run everywhere custom.js
-	 * loads rather than gating it to the apply page specifically.
+	 * list, and each .bizupkeep-repeater gets a working "+ Add" /
+	 * "Remove" repeater (directors, or Annual Return financial years).
+	 * All four behaviours are no-ops (the querySelectorAll calls just
+	 * return empty lists) on any other page, so this is safe to run
+	 * everywhere custom.js loads rather than gating it to the apply
+	 * page specifically.
 	 */
 	document.addEventListener( 'DOMContentLoaded', function () {
 		bizupkeepInitApplicationTypeToggle();
 		bizupkeepInitAmendmentTypeToggle();
 		bizupkeepInitCompanyModeToggle();
 		bizupkeepInitCompanyDirectorToggle();
-		bizupkeepInitDirectorRepeaters();
+		bizupkeepInitRepeaters();
 	} );
 
 	function bizupkeepInitApplicationTypeToggle() {
@@ -214,21 +215,25 @@
 	}
 
 	/**
-	 * Generic "+ Add Director" / "Remove" repeater, driven entirely by
-	 * data attributes so the same code serves both the New Registration
-	 * director list and the Company Amendment "add new director(s)"
-	 * list: data-repeater (a label, unused by the JS itself),
-	 * data-template-id (the <template> holding one blank block, with
-	 * field names using the literal placeholder "__INDEX__" - see
-	 * bizupkeep_child_render_director_fields() in functions.php),
-	 * data-max (upper bound on blocks).
+	 * Generic "+ Add" / "Remove" repeater, driven entirely by data
+	 * attributes so the same code serves the New Registration director
+	 * list, the Company Amendment "add new director(s)" list, and the
+	 * Annual Return "which financial year(s)" list: data-repeater (a
+	 * label, unused by the JS itself), data-template-id (the <template>
+	 * holding one blank block, with field names using the literal
+	 * placeholder "__INDEX__" - see bizupkeep_child_render_director_fields()/
+	 * bizupkeep_child_render_filing_fields() in functions.php),
+	 * data-max (upper bound on blocks). The remove handler looks for
+	 * the clicked button's closest direct child of the blocks
+	 * container rather than a specific per-type block class, so it
+	 * works for whatever kind of row a given repeater actually holds.
 	 */
-	function bizupkeepInitDirectorRepeaters() {
-		var repeaters = document.querySelectorAll( '.bizupkeep-director-repeater' );
+	function bizupkeepInitRepeaters() {
+		var repeaters = document.querySelectorAll( '.bizupkeep-repeater' );
 
 		repeaters.forEach( function ( repeater ) {
 			var template = document.getElementById( repeater.getAttribute( 'data-template-id' ) );
-			var blocksContainer = repeater.querySelector( '.bizupkeep-director-blocks' );
+			var blocksContainer = repeater.querySelector( '.bizupkeep-repeater-blocks' );
 			var addButton = repeater.querySelector( '.bizupkeep-repeater-add' );
 			var max = parseInt( repeater.getAttribute( 'data-max' ), 10 ) || 10;
 			var nextIndex = blocksContainer ? blocksContainer.children.length : 0;
@@ -257,7 +262,7 @@
 					return;
 				}
 
-				var block = event.target.closest( '.bizupkeep-director-block' );
+				var block = event.target.closest( '.bizupkeep-repeater-blocks > *' );
 
 				if ( block ) {
 					block.remove();
