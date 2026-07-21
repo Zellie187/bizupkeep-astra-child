@@ -36,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.13.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.14.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -917,6 +917,14 @@ function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $note
  * companies and a financial year. Returns false on any failure, per
  * the same public-form-submission convention as the other two submit
  * handlers.
+ *
+ * Unlike Company Registration/Amendment, this does NOT immediately
+ * fire ACTION_REQUEST_PAYMENT - the application stays in Created until
+ * staff check CIPC and send a quote from the Quality Review screen
+ * (see AnnualReturnGuard::guardRequestPayment(), which now requires a
+ * quote_amount in context). "Created" is the client-visible "awaiting
+ * our review" state for this workflow type - see
+ * bizupkeep_child_workflow_status_label().
  */
 function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ): bool {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
@@ -935,19 +943,11 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
 		return false;
 	}
 
-	try {
-		$returns  = bizhub()->container()->get( AnnualReturnService::class );
-		$instance = $returns->start( $company->getUuid(), $wp_user_id, $financial_year );
+	$metadata = '' !== trim( $notes ) ? array( 'client_notes' => $notes ) : array();
 
-		// No PendingDocuments stage for Annual Return (see
-		// AnnualReturnDefinition) - Created moves straight to
-		// AwaitingPayment.
-		$returns->performAction(
-			$instance->getUuid(),
-			AnnualReturnDefinition::ACTION_REQUEST_PAYMENT,
-			$wp_user_id,
-			$notes
-		);
+	try {
+		$returns = bizhub()->container()->get( AnnualReturnService::class );
+		$returns->start( $company->getUuid(), $wp_user_id, $financial_year, $metadata );
 	} catch ( \Throwable $e ) {
 		return false;
 	}
@@ -1908,7 +1908,7 @@ function bizupkeep_child_documents_sections( int $wp_user_id ): array {
 			'workflow_uuid'        => $instance->getUuid(),
 			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
 			'company_name'         => $row['company']->getCompanyName(),
-			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus() ),
+			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus(), $instance->getWorkflowType() ),
 			'can_upload'           => WorkflowStatus::PendingDocuments === $instance->getStatus(),
 			'documents'            => $uploaded,
 			'poa_url'              => $needs_poa ? bizupkeep_child_poa_url( $instance->getUuid() ) : null,
@@ -2125,8 +2125,20 @@ function bizupkeep_child_render_poa_document( WorkflowInstance $workflow, Compan
  * CompanyRegistrationDefinition's status names since the enum itself
  * has no label() method (unlike DocumentCategory/ApplicationStatus,
  * which do).
+ *
+ * $workflow_type is optional but lets a handful of (type, status)
+ * combinations override the generic label with something more
+ * accurate for that type - currently only Annual Return's Created,
+ * which for every OTHER type means "just submitted, about to move on
+ * immediately" but for Annual Return means "submitted, and will sit
+ * here until staff check CIPC and send a quote" (see
+ * bizupkeep_child_submit_annual_return()).
  */
-function bizupkeep_child_workflow_status_label( WorkflowStatus $status ): string {
+function bizupkeep_child_workflow_status_label( WorkflowStatus $status, string $workflow_type = '' ): string {
+	if ( AnnualReturnDefinition::TYPE === $workflow_type && WorkflowStatus::Created === $status ) {
+		return __( 'Awaiting Staff Review', 'bizupkeep-astra-child' );
+	}
+
 	return match ( $status ) {
 		WorkflowStatus::Created => __( 'Created', 'bizupkeep-astra-child' ),
 		WorkflowStatus::PendingDocuments => __( 'Awaiting Your Documents', 'bizupkeep-astra-child' ),
@@ -2184,10 +2196,32 @@ function bizupkeep_child_workflow_status_label( WorkflowStatus $status ): string
 const BIZUPKEEP_PAYMENT_SESSION_KEY = 'bizupkeep_workflow_uuid';
 const BIZUPKEEP_PACKAGES_CATEGORY_SLUG = 'company-registration-packages';
 
+/**
+ * An Annual Return's price isn't a fixed WooCommerce product - it's
+ * whatever staff quoted after checking CIPC (see AnnualReturnGuard::
+ * guardRequestPayment()), which can differ per company/filing. This
+ * session key carries that specific amount from
+ * bizupkeep_child_handle_annual_return_payment_intent() through to
+ * bizupkeep_child_apply_annual_return_quote_price(), the same way
+ * BIZUPKEEP_PAYMENT_SESSION_KEY already carries the workflow UUID -
+ * cleared in bizupkeep_child_attach_workflow_to_order() once the order
+ * exists and no longer needs it.
+ */
+const BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY = 'bizupkeep_annual_return_quote_amount';
+
+/**
+ * SKU of the hidden, zero-priced "Annual Return Filing Fee" product
+ * used purely as a cart line item to collect a quoted amount at
+ * checkout - see bizupkeep_child_get_or_create_annual_return_fee_product().
+ */
+const BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU = 'bizupkeep-annual-return-fee';
+
 if ( class_exists( 'WooCommerce' ) ) {
 	add_action( 'template_redirect', 'bizupkeep_child_capture_payment_intent' );
+	add_action( 'template_redirect', 'bizupkeep_child_handle_annual_return_payment_intent' );
 	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_workflow_to_order', 10, 2 );
 	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_order_payment', 10, 4 );
+	add_action( 'woocommerce_before_calculate_totals', 'bizupkeep_child_apply_annual_return_quote_price' );
 }
 
 /**
@@ -2237,6 +2271,141 @@ function bizupkeep_child_capture_payment_intent(): void {
 }
 
 /**
+ * Build the "Pay Now" URL for an Annual Return application
+ * specifically - unlike bizupkeep_child_payment_url() (a fixed-price
+ * WooCommerce product category, used by Company Registration/
+ * Amendment), this doesn't send the client anywhere to pick a product:
+ * it goes straight to bizupkeep_child_handle_annual_return_payment_intent(),
+ * which adds the hidden fee product to a cleared cart at the exact
+ * quoted amount and redirects straight to checkout.
+ */
+function bizupkeep_child_annual_return_payment_url( string $workflow_uuid ): string {
+	return add_query_arg(
+		'bizupkeep_pay_annual_return',
+		$workflow_uuid,
+		home_url( '/client-portal/client-portal-applications/' )
+	);
+}
+
+/**
+ * Handle ?bizupkeep_pay_annual_return={workflow_uuid}: verify the
+ * application belongs to the logged-in client, is actually an Annual
+ * Return sitting in AwaitingPayment, and has a positive quote_amount
+ * on file (all three should already be true by the time a "Pay Now"
+ * link exists at all, but this is the actual trust boundary, not the
+ * link) - then clear the cart, add the hidden fee product, stash both
+ * the workflow UUID and the quoted amount in the WooCommerce session,
+ * and send the client straight to checkout. The cart is deliberately
+ * emptied first so an Annual Return payment is never accidentally
+ * combined with an unrelated Company Registration package sitting in
+ * the same cart.
+ */
+function bizupkeep_child_handle_annual_return_payment_intent(): void {
+	if ( ! isset( $_GET['bizupkeep_pay_annual_return'] ) || ! is_user_logged_in() ) {
+		return;
+	}
+
+	if ( null === WC()->cart || null === WC()->session ) {
+		return;
+	}
+
+	$fallback_url  = home_url( '/client-portal/client-portal-applications/' );
+	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_pay_annual_return'] ) );
+	$workflow      = bizupkeep_child_get_owned_workflow_instance( get_current_user_id(), $workflow_uuid );
+
+	if ( null === $workflow
+		|| AnnualReturnDefinition::TYPE !== $workflow->getWorkflowType()
+		|| WorkflowStatus::AwaitingPayment !== $workflow->getStatus()
+	) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	$quote_amount = $workflow->getMetadata()['quote_amount'] ?? null;
+
+	if ( ! is_numeric( $quote_amount ) || (float) $quote_amount <= 0 ) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	$product_id = bizupkeep_child_get_or_create_annual_return_fee_product();
+
+	if ( 0 === $product_id ) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	WC()->cart->empty_cart();
+	WC()->cart->add_to_cart( $product_id, 1 );
+	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $workflow_uuid );
+	WC()->session->set( BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY, (float) $quote_amount );
+
+	wp_safe_redirect( wc_get_checkout_url() );
+	exit;
+}
+
+/**
+ * Override the hidden fee product's cart-item price to whatever
+ * amount was stashed in session when the client clicked "Pay Now" -
+ * the standard WooCommerce pattern for a variable/custom-amount
+ * product (the product's own listed price is just a 0 placeholder,
+ * since it's never meant to be added to a cart any way other than via
+ * bizupkeep_child_handle_annual_return_payment_intent()).
+ */
+function bizupkeep_child_apply_annual_return_quote_price( WC_Cart $cart ): void {
+	if ( null === WC()->session ) {
+		return;
+	}
+
+	$amount = WC()->session->get( BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY );
+
+	if ( ! is_numeric( $amount ) || (float) $amount <= 0 ) {
+		return;
+	}
+
+	$product_id = wc_get_product_id_by_sku( BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU );
+
+	if ( ! $product_id ) {
+		return;
+	}
+
+	foreach ( $cart->get_cart() as $cart_item ) {
+		if ( (int) $cart_item['product_id'] === (int) $product_id ) {
+			$cart_item['data']->set_price( (float) $amount );
+		}
+	}
+}
+
+/**
+ * Idempotently find (or create) the hidden "Annual Return Filing Fee"
+ * product used to collect a staff-quoted amount at checkout - hidden
+ * from the shop/search catalog since it's never meant to be browsed,
+ * only added to cart programmatically.
+ */
+function bizupkeep_child_get_or_create_annual_return_fee_product(): int {
+	$existing = wc_get_product_id_by_sku( BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU );
+
+	if ( $existing ) {
+		return (int) $existing;
+	}
+
+	if ( ! class_exists( 'WC_Product_Simple' ) ) {
+		return 0;
+	}
+
+	$product = new WC_Product_Simple();
+	$product->set_name( __( 'Annual Return Filing Fee', 'bizupkeep-astra-child' ) );
+	$product->set_sku( BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU );
+	$product->set_regular_price( '0' );
+	$product->set_price( '0' );
+	$product->set_virtual( true );
+	$product->set_catalog_visibility( 'hidden' );
+	$product->set_status( 'publish' );
+
+	return (int) $product->save();
+}
+
+/**
  * At checkout, copy the pending application's workflow UUID from the
  * WooCommerce session onto the new order as post meta, so it survives
  * past the session into something permanently queryable against the
@@ -2256,6 +2425,7 @@ function bizupkeep_child_attach_workflow_to_order( WC_Order $order, array $data 
 	}
 
 	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, null );
+	WC()->session->set( BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY, null );
 
 	$wp_user_id = get_current_user_id();
 
@@ -2334,29 +2504,56 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
  * and (only while that specific application is AwaitingPayment) a
  * "Pay Now" link, or (only while it's a Company Registration sitting
  * in NamesRejected) the staff reviewer's rejection notes and a flag
- * telling the template to show the "resubmit names" form.
+ * telling the template to show the "resubmit names" form, or (only
+ * while it's an Annual Return that's actually been quoted) the quoted
+ * amount/notes to display alongside its own "Pay Now" link.
  *
- * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string}>
+ * An Annual Return's "Pay Now" link is NOT the same
+ * bizupkeep_child_payment_url() the other two types use (a fixed-price
+ * WooCommerce product category) - it routes to
+ * bizupkeep_child_annual_return_payment_url() instead, which charges
+ * the exact staff-quoted amount rather than whatever product the
+ * client happens to pick.
+ *
+ * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string}>
  */
 function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 	$sections = array();
 
 	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
 		$instance = $row['instance'];
+		$is_annual_return = AnnualReturnDefinition::TYPE === $instance->getWorkflowType();
 
 		$needs_resubmission = CompanyRegistrationDefinition::TYPE === $instance->getWorkflowType()
 			&& WorkflowStatus::NamesRejected === $instance->getStatus();
+
+		$pay_url = null;
+
+		if ( WorkflowStatus::AwaitingPayment === $instance->getStatus() && class_exists( 'WooCommerce' ) ) {
+			$pay_url = $is_annual_return
+				? bizupkeep_child_annual_return_payment_url( $instance->getUuid() )
+				: bizupkeep_child_payment_url( $instance->getUuid() );
+		}
+
+		$metadata     = $instance->getMetadata();
+		$quote_amount = null;
+		$quote_notes  = '';
+
+		if ( $is_annual_return && isset( $metadata['quote_amount'] ) && is_numeric( $metadata['quote_amount'] ) && (float) $metadata['quote_amount'] > 0 ) {
+			$quote_amount = (float) $metadata['quote_amount'];
+			$quote_notes  = is_string( $metadata['quote_notes'] ?? null ) ? $metadata['quote_notes'] : '';
+		}
 
 		$sections[] = array(
 			'workflow_uuid'        => $instance->getUuid(),
 			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
 			'company_name'         => $row['company']->getCompanyName(),
-			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus() ),
-			'pay_url'              => WorkflowStatus::AwaitingPayment === $instance->getStatus()
-				? ( class_exists( 'WooCommerce' ) ? bizupkeep_child_payment_url( $instance->getUuid() ) : null )
-				: null,
+			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus(), $instance->getWorkflowType() ),
+			'pay_url'              => $pay_url,
 			'needs_resubmission'   => $needs_resubmission,
 			'rejection_reason'     => $needs_resubmission ? bizupkeep_child_latest_rejection_reason( $instance ) : '',
+			'quote_amount'         => $quote_amount,
+			'quote_notes'          => $quote_notes,
 		);
 	}
 

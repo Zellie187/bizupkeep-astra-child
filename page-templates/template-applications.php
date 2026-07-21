@@ -62,6 +62,17 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 							<td><?php echo esc_html( $section['company_name'] ); ?></td>
 							<td><span class="bizupkeep-status-pill"><?php echo esc_html( $section['status_label'] ); ?></span></td>
 							<td>
+								<?php if ( null !== $section['quote_amount'] ) : ?>
+									<p class="bizupkeep-quote-amount">
+										<?php
+										echo wp_kses_post(
+											class_exists( 'WooCommerce' )
+												? wc_price( $section['quote_amount'] )
+												: 'R' . number_format( $section['quote_amount'], 2 )
+										);
+										?>
+									</p>
+								<?php endif; ?>
 								<?php if ( null !== $section['pay_url'] ) : ?>
 									<a href="<?php echo esc_url( $section['pay_url'] ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
 										<?php esc_html_e( 'Pay Now', 'bizupkeep-astra-child' ); ?>
@@ -69,6 +80,13 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 								<?php endif; ?>
 							</td>
 						</tr>
+						<?php if ( null !== $section['quote_amount'] && '' !== $section['quote_notes'] ) : ?>
+							<tr class="bizupkeep-quote-notes-row">
+								<td colspan="4">
+									<p><strong><?php esc_html_e( 'Quote notes:', 'bizupkeep-astra-child' ); ?></strong> <?php echo esc_html( $section['quote_notes'] ); ?></p>
+								</td>
+							</tr>
+						<?php endif; ?>
 						<?php if ( $section['needs_resubmission'] ) : ?>
 							<tr class="bizupkeep-resubmit-row">
 								<td colspan="4">
