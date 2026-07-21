@@ -36,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.11.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.12.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -1922,6 +1922,7 @@ function bizupkeep_child_workflow_status_label( WorkflowStatus $status ): string
 		WorkflowStatus::Archived => __( 'Archived', 'bizupkeep-astra-child' ),
 		WorkflowStatus::Cancelled => __( 'Cancelled', 'bizupkeep-astra-child' ),
 		WorkflowStatus::Rejected => __( 'Rejected', 'bizupkeep-astra-child' ),
+		WorkflowStatus::NamesRejected => __( 'Name Not Approved - Please Resubmit', 'bizupkeep-astra-child' ),
 	};
 }
 
@@ -2115,9 +2116,11 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
  * application (workflow instance) belonging to the logged-in user's
  * client record, across all three workflow types, with its own status
  * and (only while that specific application is AwaitingPayment) a
- * "Pay Now" link.
+ * "Pay Now" link, or (only while it's a Company Registration sitting
+ * in NamesRejected) the staff reviewer's rejection notes and a flag
+ * telling the template to show the "resubmit names" form.
  *
- * @return array<int,array{workflow_type_label:string,company_name:string,status_label:string,pay_url:?string}>
+ * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string}>
  */
 function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 	$sections = array();
@@ -2125,15 +2128,129 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
 		$instance = $row['instance'];
 
+		$needs_resubmission = CompanyRegistrationDefinition::TYPE === $instance->getWorkflowType()
+			&& WorkflowStatus::NamesRejected === $instance->getStatus();
+
 		$sections[] = array(
+			'workflow_uuid'        => $instance->getUuid(),
 			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
 			'company_name'         => $row['company']->getCompanyName(),
 			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus() ),
 			'pay_url'              => WorkflowStatus::AwaitingPayment === $instance->getStatus()
 				? ( class_exists( 'WooCommerce' ) ? bizupkeep_child_payment_url( $instance->getUuid() ) : null )
 				: null,
+			'needs_resubmission'   => $needs_resubmission,
+			'rejection_reason'     => $needs_resubmission ? bizupkeep_child_latest_rejection_reason( $instance ) : '',
 		);
 	}
 
 	return $sections;
+}
+
+/**
+ * The staff reviewer's notes from the most recent time this workflow
+ * was sent to NamesRejected (see QualityReviewPage::ACTION_REJECT_NAME
+ * in bizupkeep-workflow), so the client can see *why* their proposed
+ * names weren't approved before submitting new ones. Empty if the
+ * workflow has never been through that action, or its history can't
+ * be read for any reason.
+ */
+function bizupkeep_child_latest_rejection_reason( WorkflowInstance $instance ): string {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return '';
+	}
+
+	try {
+		$history = bizupkeep_child_workflow_type_service( $instance->getWorkflowType() )
+			->historyFor( $instance->getUuid() );
+	} catch ( \Throwable $e ) {
+		return '';
+	}
+
+	for ( $i = count( $history ) - 1; $i >= 0; $i-- ) {
+		if ( CompanyRegistrationDefinition::ACTION_REJECT_NAME === $history[ $i ]->action ) {
+			return $history[ $i ]->reason;
+		}
+	}
+
+	return '';
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_resubmit_names' );
+
+/**
+ * Handle the My Applications page's "resubmit names" form POST - the
+ * client-facing other half of QualityReviewPage's "Reject - Name Not
+ * Approved" action in bizupkeep-workflow. Runs on template_redirect
+ * (before the page template renders) so it can redirect on
+ * success/failure.
+ */
+function bizupkeep_child_handle_resubmit_names(): void {
+	if ( ! isset( $_POST['bizupkeep_resubmit_nonce'] ) ) {
+		return;
+	}
+
+	if ( ! is_page() || bizupkeep_child_find_page( 'client-portal-applications', bizupkeep_child_find_page( 'client-portal', 0 ) ) !== get_queried_object_id() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_resubmit_names', 'bizupkeep_resubmit_nonce' );
+
+	$wp_user_id    = get_current_user_id();
+	$workflow_uuid = isset( $_POST['resubmit_workflow_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['resubmit_workflow_uuid'] ) ) : '';
+
+	$result = bizupkeep_child_process_resubmit_names( $wp_user_id, $workflow_uuid );
+
+	wp_safe_redirect( add_query_arg( $result ? 'names_resubmitted' : 'resubmit_error', '1', get_permalink() ) );
+	exit;
+}
+
+/**
+ * Re-verify ownership and status, then resubmit new proposed names on
+ * a Company Registration workflow currently sitting in NamesRejected -
+ * moving it back to QualityReview for another look. Returns false
+ * (rather than throwing) on any failure, since this runs from a
+ * public-facing form submission.
+ */
+function bizupkeep_child_process_resubmit_names( int $wp_user_id, string $workflow_uuid ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$workflow = bizupkeep_child_get_owned_workflow_instance( $wp_user_id, $workflow_uuid );
+
+	if ( null === $workflow
+		|| CompanyRegistrationDefinition::TYPE !== $workflow->getWorkflowType()
+		|| WorkflowStatus::NamesRejected !== $workflow->getStatus()
+	) {
+		return false;
+	}
+
+	$proposed_names = isset( $_POST['resubmit_proposed_name'] ) && is_array( $_POST['resubmit_proposed_name'] )
+		? bizupkeep_child_parse_proposed_names( $_POST['resubmit_proposed_name'] )
+		: array();
+
+	if ( array() === $proposed_names ) {
+		return false;
+	}
+
+	try {
+		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
+		$registration->performAction(
+			$workflow_uuid,
+			CompanyRegistrationDefinition::ACTION_RESUBMIT_NAMES,
+			$wp_user_id,
+			__( 'Client resubmitted new proposed company names.', 'bizupkeep-astra-child' ),
+			array( 'proposed_names' => $proposed_names )
+		);
+	} catch ( \Throwable $e ) {
+		return false;
+	}
+
+	return true;
 }

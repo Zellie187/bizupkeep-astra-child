@@ -29,6 +29,12 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 
 		<h1><?php esc_html_e( 'My Applications', 'bizupkeep-astra-child' ); ?></h1>
 
+		<?php if ( isset( $_GET['names_resubmitted'] ) ) : ?>
+			<p class="bizupkeep-status-pill"><?php esc_html_e( 'New names submitted - your application is back in review.', 'bizupkeep-astra-child' ); ?></p>
+		<?php elseif ( isset( $_GET['resubmit_error'] ) ) : ?>
+			<p class="bizupkeep-status-pill"><?php esc_html_e( 'Something went wrong submitting your new names - please try again.', 'bizupkeep-astra-child' ); ?></p>
+		<?php endif; ?>
+
 		<?php if ( array() === $sections ) : ?>
 
 			<p><?php esc_html_e( "You don't have any applications in progress yet.", 'bizupkeep-astra-child' ); ?></p>
@@ -63,6 +69,48 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 								<?php endif; ?>
 							</td>
 						</tr>
+						<?php if ( $section['needs_resubmission'] ) : ?>
+							<tr class="bizupkeep-resubmit-row">
+								<td colspan="4">
+									<div class="bizupkeep-resubmit-names">
+										<?php if ( '' !== $section['rejection_reason'] ) : ?>
+											<p><strong><?php esc_html_e( "Reviewer's notes:", 'bizupkeep-astra-child' ); ?></strong> <?php echo esc_html( $section['rejection_reason'] ); ?></p>
+										<?php endif; ?>
+										<p><?php esc_html_e( 'CIPC did not approve your proposed company name(s). Please submit new options below.', 'bizupkeep-astra-child' ); ?></p>
+										<form method="post" class="bizupkeep-resubmit-form">
+											<?php wp_nonce_field( 'bizupkeep_resubmit_names', 'bizupkeep_resubmit_nonce' ); ?>
+											<input type="hidden" name="resubmit_workflow_uuid" value="<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
+
+											<label for="bizupkeep-resubmit-name-1-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
+												<?php esc_html_e( 'Proposed Company Name (1st choice)', 'bizupkeep-astra-child' ); ?>
+											</label>
+											<input type="text" id="bizupkeep-resubmit-name-1-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="resubmit_proposed_name[]">
+
+											<label for="bizupkeep-resubmit-name-2-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
+												<?php esc_html_e( '2nd choice (optional)', 'bizupkeep-astra-child' ); ?>
+											</label>
+											<input type="text" id="bizupkeep-resubmit-name-2-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="resubmit_proposed_name[]">
+
+											<label for="bizupkeep-resubmit-name-3-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
+												<?php esc_html_e( '3rd choice (optional)', 'bizupkeep-astra-child' ); ?>
+											</label>
+											<input type="text" id="bizupkeep-resubmit-name-3-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="resubmit_proposed_name[]">
+
+											<label for="bizupkeep-resubmit-name-4-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
+												<?php esc_html_e( '4th choice (optional)', 'bizupkeep-astra-child' ); ?>
+											</label>
+											<input type="text" id="bizupkeep-resubmit-name-4-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="resubmit_proposed_name[]">
+
+											<p>
+												<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+													<?php esc_html_e( 'Resubmit Names', 'bizupkeep-astra-child' ); ?>
+												</button>
+											</p>
+										</form>
+									</div>
+								</td>
+							</tr>
+						<?php endif; ?>
 					<?php endforeach; ?>
 				</tbody>
 			</table>
