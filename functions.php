@@ -36,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.10.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.11.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -834,12 +834,13 @@ function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $note
 		return false;
 	}
 
-	$company_uuid = isset( $_POST['amendment_company_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['amendment_company_uuid'] ) ) : '';
-	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$company = bizupkeep_child_resolve_company_for_submission( $wp_user_id, 'amendment' );
 
 	if ( null === $company ) {
 		return false;
 	}
+
+	$company_uuid = $company->getUuid();
 
 	$allowed_types    = array(
 		CompanyAmendmentDefinition::AMENDMENT_TYPE_DIRECTOR,
@@ -922,8 +923,7 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
 		return false;
 	}
 
-	$company_uuid = isset( $_POST['return_company_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['return_company_uuid'] ) ) : '';
-	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$company = bizupkeep_child_resolve_company_for_submission( $wp_user_id, 'return' );
 
 	if ( null === $company ) {
 		return false;
@@ -937,7 +937,7 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
 
 	try {
 		$returns  = bizhub()->container()->get( AnnualReturnService::class );
-		$instance = $returns->start( $company_uuid, $wp_user_id, $financial_year );
+		$instance = $returns->start( $company->getUuid(), $wp_user_id, $financial_year );
 
 		// No PendingDocuments stage for Annual Return (see
 		// AnnualReturnDefinition) - Created moves straight to
@@ -953,6 +953,106 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
 	}
 
 	return true;
+}
+
+/**
+ * Resolve which company a Company Amendment/Annual Return application
+ * is for, per the "{$prefix}_company_mode" radio the client picked -
+ * either one of their existing companies (unchanged from before:
+ * looked up and ownership-verified from "{$prefix}_company_uuid"), or
+ * a brand new company record for one that isn't registered with us at
+ * all yet (from "{$prefix}_new_company[...]"). Returns null on any
+ * failure, per the same public-form-submission convention every other
+ * submit helper in this file uses.
+ */
+function bizupkeep_child_resolve_company_for_submission( int $wp_user_id, string $prefix ): ?Company {
+	$mode = isset( $_POST[ "{$prefix}_company_mode" ] ) ? sanitize_text_field( wp_unslash( $_POST[ "{$prefix}_company_mode" ] ) ) : 'existing';
+
+	if ( 'new' === $mode ) {
+		$raw = isset( $_POST[ "{$prefix}_new_company" ] ) && is_array( $_POST[ "{$prefix}_new_company" ] )
+			? $_POST[ "{$prefix}_new_company" ]
+			: array();
+
+		return bizupkeep_child_create_external_company( $wp_user_id, $raw );
+	}
+
+	$company_uuid = isset( $_POST[ "{$prefix}_company_uuid" ] ) ? sanitize_text_field( wp_unslash( $_POST[ "{$prefix}_company_uuid" ] ) ) : '';
+
+	return bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+}
+
+/**
+ * Create a Company record for a company that exists (at CIPC) but was
+ * never registered through us - the client is only filing an
+ * amendment or annual return for it, not registering it fresh. Unlike
+ * bizupkeep_child_submit_new_registration()'s placeholder
+ * 'PENDING-{uuid}' registration number and CompanyStatus::CREATED
+ * (used while CIPC registration is still in progress), this uses the
+ * real registration number the client provides and
+ * CompanyStatus::ACTIVE, since the company is already a going concern
+ * - it just isn't one of our own Company Registration workflow's
+ * outputs. Once created, it behaves exactly like any other company on
+ * the account (shows up in the "existing company" picker for future
+ * applications, etc.).
+ *
+ * @param array<string,mixed> $raw
+ */
+function bizupkeep_child_create_external_company( int $wp_user_id, array $raw ): ?Company {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return null;
+	}
+
+	$raw               = wp_unslash( $raw );
+	$company_name      = sanitize_text_field( $raw['company_name'] ?? '' );
+	$registration_no   = sanitize_text_field( $raw['registration_number'] ?? '' );
+
+	if ( '' === $company_name || '' === $registration_no ) {
+		return null;
+	}
+
+	$address = isset( $raw['address'] ) && is_array( $raw['address'] )
+		? bizupkeep_child_parse_address_input( $raw['address'] )
+		: new AddressData( '', '', '', '', '', '' );
+
+	if ( '' === trim( $address->addressLine1 ) || '' === trim( $address->city ) || '' === trim( $address->postalCode ) ) {
+		return null;
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$client = $clients->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return null;
+	}
+
+	$client_id = $client->getId();
+
+	if ( null === $client_id ) {
+		return null;
+	}
+
+	try {
+		$companies = bizhub()->container()->get( CompanyServiceInterface::class );
+
+		return $companies->createCompany(
+			new CompanyData(
+				wp_generate_uuid4(),
+				$client_id,
+				$registration_no,
+				$company_name,
+				__( 'Private Company (Pty) Ltd', 'bizupkeep-astra-child' ),
+				CompanyStatus::ACTIVE,
+				$address
+			)
+		);
+	} catch ( \Throwable $e ) {
+		// Most likely InvalidCompanyException::duplicateRegistrationNumber()
+		// (this exact registration number is already on file, e.g. a
+		// double form submission) - either way, treated as a generic
+		// submission failure like every other guarded step on this form.
+		return null;
+	}
 }
 
 /**
@@ -1204,6 +1304,78 @@ function bizupkeep_child_render_address_fields( string $prefix ): void {
 		<label><?php esc_html_e( 'Postal Code', 'bizupkeep-astra-child' ); ?></label>
 		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[postal_code]">
 	</p>
+	<?php
+}
+
+/**
+ * Render the "Which Company?" block shared by the Company Amendment
+ * and Annual Return sections: a choice between one of the client's
+ * existing companies (a picker, same as before) and a company that
+ * isn't registered with us at all (a small name/registration number/
+ * address form) - since staff can file an amendment or annual return
+ * for a company we never originally registered. $prefix ('amendment'
+ * or 'return') namespaces every field name and matches what
+ * bizupkeep_child_resolve_company_for_submission() reads back out of
+ * $_POST on submit.
+ *
+ * @param array<int,array{uuid:string,name:string,directors:array<int,array{uuid:string,full_name:string}>}> $companies
+ */
+function bizupkeep_child_render_company_picker( string $prefix, array $companies ): void {
+	$has_companies = array() !== $companies;
+	?>
+	<label class="bizupkeep-type-option">
+		<input
+			type="radio"
+			name="<?php echo esc_attr( $prefix ); ?>_company_mode"
+			value="existing"
+			class="bizupkeep-company-mode-toggle"
+			data-mode-prefix="<?php echo esc_attr( $prefix ); ?>"
+			data-reveals="<?php echo esc_attr( $prefix ); ?>-mode-existing"
+			<?php checked( $has_companies ); ?>
+		>
+		<?php esc_html_e( 'An existing company (already registered with us)', 'bizupkeep-astra-child' ); ?>
+	</label>
+	<label class="bizupkeep-type-option">
+		<input
+			type="radio"
+			name="<?php echo esc_attr( $prefix ); ?>_company_mode"
+			value="new"
+			class="bizupkeep-company-mode-toggle"
+			data-mode-prefix="<?php echo esc_attr( $prefix ); ?>"
+			data-reveals="<?php echo esc_attr( $prefix ); ?>-mode-new"
+			<?php checked( ! $has_companies ); ?>
+		>
+		<?php esc_html_e( "A company not registered with us", 'bizupkeep-astra-child' ); ?>
+	</label>
+
+	<div data-company-mode-section="<?php echo esc_attr( $prefix ); ?>-mode-existing" <?php echo $has_companies ? '' : 'hidden'; ?>>
+		<?php if ( ! $has_companies ) : ?>
+			<p class="bizupkeep-field-hint"><?php esc_html_e( "You don't have any companies registered with us yet - use the other option above.", 'bizupkeep-astra-child' ); ?></p>
+		<?php else : ?>
+			<p>
+				<label for="bizupkeep-<?php echo esc_attr( $prefix ); ?>-company"><?php esc_html_e( 'Company', 'bizupkeep-astra-child' ); ?></label>
+				<select id="bizupkeep-<?php echo esc_attr( $prefix ); ?>-company" name="<?php echo esc_attr( $prefix ); ?>_company_uuid" class="bizupkeep-company-picker" data-existing-directors-target="<?php echo esc_attr( $prefix ); ?>">
+					<option value=""><?php esc_html_e( 'Select a company', 'bizupkeep-astra-child' ); ?></option>
+					<?php foreach ( $companies as $company ) : ?>
+						<option value="<?php echo esc_attr( $company['uuid'] ); ?>"><?php echo esc_html( $company['name'] ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</p>
+		<?php endif; ?>
+	</div>
+
+	<div data-company-mode-section="<?php echo esc_attr( $prefix ); ?>-mode-new" <?php echo $has_companies ? 'hidden' : ''; ?>>
+		<p>
+			<label for="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-name"><?php esc_html_e( 'Company Name', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" id="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-name" name="<?php echo esc_attr( $prefix ); ?>_new_company[company_name]">
+		</p>
+		<p>
+			<label for="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-regno"><?php esc_html_e( 'CIPC Registration Number', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" id="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-regno" name="<?php echo esc_attr( $prefix ); ?>_new_company[registration_number]">
+		</p>
+		<h3><?php esc_html_e( 'Registered Address', 'bizupkeep-astra-child' ); ?></h3>
+		<?php bizupkeep_child_render_address_fields( "{$prefix}_new_company[address]" ); ?>
+	</div>
 	<?php
 }
 

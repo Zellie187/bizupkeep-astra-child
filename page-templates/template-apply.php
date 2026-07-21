@@ -130,19 +130,7 @@ get_header();
 
 					<h2><?php esc_html_e( 'Which Company?', 'bizupkeep-astra-child' ); ?></h2>
 
-					<?php if ( empty( $companies ) ) : ?>
-						<p><?php esc_html_e( 'You have no registered companies yet - amendments can only be filed for an existing company.', 'bizupkeep-astra-child' ); ?></p>
-					<?php else : ?>
-						<p>
-							<label for="bizupkeep-amendment-company"><?php esc_html_e( 'Company', 'bizupkeep-astra-child' ); ?></label>
-							<select id="bizupkeep-amendment-company" name="amendment_company_uuid" class="bizupkeep-company-picker" data-existing-directors-target="amendment">
-								<option value=""><?php esc_html_e( 'Select a company', 'bizupkeep-astra-child' ); ?></option>
-								<?php foreach ( $companies as $company ) : ?>
-									<option value="<?php echo esc_attr( $company['uuid'] ); ?>"><?php echo esc_html( $company['name'] ); ?></option>
-								<?php endforeach; ?>
-							</select>
-						</p>
-					<?php endif; ?>
+					<?php bizupkeep_child_render_company_picker( 'amendment', $companies ); ?>
 
 					<h2><?php esc_html_e( 'What Would You Like to Change?', 'bizupkeep-astra-child' ); ?></h2>
 
@@ -224,23 +212,12 @@ get_header();
 
 					<h2><?php esc_html_e( 'Annual Return', 'bizupkeep-astra-child' ); ?></h2>
 
-					<?php if ( empty( $companies ) ) : ?>
-						<p><?php esc_html_e( 'You have no registered companies yet - an Annual Return can only be filed for an existing company.', 'bizupkeep-astra-child' ); ?></p>
-					<?php else : ?>
-						<p>
-							<label for="bizupkeep-return-company"><?php esc_html_e( 'Company', 'bizupkeep-astra-child' ); ?></label>
-							<select id="bizupkeep-return-company" name="return_company_uuid">
-								<option value=""><?php esc_html_e( 'Select a company', 'bizupkeep-astra-child' ); ?></option>
-								<?php foreach ( $companies as $company ) : ?>
-									<option value="<?php echo esc_attr( $company['uuid'] ); ?>"><?php echo esc_html( $company['name'] ); ?></option>
-								<?php endforeach; ?>
-							</select>
-						</p>
-						<p>
-							<label for="bizupkeep-return-year"><?php esc_html_e( 'Financial Year', 'bizupkeep-astra-child' ); ?></label>
-							<input type="number" id="bizupkeep-return-year" name="financial_year" min="2000" max="2100" value="<?php echo esc_attr( gmdate( 'Y' ) ); ?>">
-						</p>
-					<?php endif; ?>
+					<?php bizupkeep_child_render_company_picker( 'return', $companies ); ?>
+
+					<p>
+						<label for="bizupkeep-return-year"><?php esc_html_e( 'Financial Year', 'bizupkeep-astra-child' ); ?></label>
+						<input type="number" id="bizupkeep-return-year" name="financial_year" min="2000" max="2100" value="<?php echo esc_attr( gmdate( 'Y' ) ); ?>">
+					</p>
 
 				</section>
 

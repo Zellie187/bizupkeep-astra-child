@@ -82,6 +82,7 @@
 	document.addEventListener( 'DOMContentLoaded', function () {
 		bizupkeepInitApplicationTypeToggle();
 		bizupkeepInitAmendmentTypeToggle();
+		bizupkeepInitCompanyModeToggle();
 		bizupkeepInitCompanyDirectorToggle();
 		bizupkeepInitDirectorRepeaters();
 	} );
@@ -132,6 +133,64 @@
 			} );
 
 			target.hidden = ! toggle.checked;
+		} );
+	}
+
+	/**
+	 * The "Which Company?" existing/new radio pair (see
+	 * bizupkeep_child_render_company_picker() in functions.php): shows
+	 * whichever of the two [data-company-mode-section] blocks matches
+	 * the checked radio's data-reveals value. Switching to "new"
+	 * (company not registered with us) also hides that section's
+	 * existing-directors list, if one happens to be showing from a
+	 * previously selected existing company - otherwise it would stay
+	 * visible even though no company is selected any more.
+	 */
+	function bizupkeepInitCompanyModeToggle() {
+		var toggles = document.querySelectorAll( '.bizupkeep-company-mode-toggle' );
+
+		if ( ! toggles.length ) {
+			return;
+		}
+
+		var prefixes = [];
+
+		toggles.forEach( function ( toggle ) {
+			var prefix = toggle.getAttribute( 'data-mode-prefix' );
+
+			if ( prefix && -1 === prefixes.indexOf( prefix ) ) {
+				prefixes.push( prefix );
+			}
+		} );
+
+		prefixes.forEach( function ( prefix ) {
+			var existingSection = document.querySelector( '[data-company-mode-section="' + prefix + '-mode-existing"]' );
+			var newSection = document.querySelector( '[data-company-mode-section="' + prefix + '-mode-new"]' );
+			var prefixToggles = document.querySelectorAll( '.bizupkeep-company-mode-toggle[data-mode-prefix="' + prefix + '"]' );
+
+			prefixToggles.forEach( function ( toggle ) {
+				toggle.addEventListener( 'change', function () {
+					if ( ! toggle.checked ) {
+						return;
+					}
+
+					var isNew = 'new' === toggle.value;
+
+					if ( existingSection ) {
+						existingSection.hidden = isNew;
+					}
+
+					if ( newSection ) {
+						newSection.hidden = ! isNew;
+					}
+
+					if ( isNew ) {
+						document.querySelectorAll( '[data-existing-directors-for="' + prefix + '"]' ).forEach( function ( block ) {
+							block.hidden = true;
+						} );
+					}
+				} );
+			} );
 		} );
 	}
 
