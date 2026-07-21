@@ -2,11 +2,12 @@
 /**
  * Template Name: BizUpKeep My Documents
  * Description:   Client Portal document collection page - one section
- *                 per company the logged-in client has an application
- *                 for, each with its current workflow status, already-
- *                 uploaded documents, and an upload form while the
- *                 workflow is waiting on documents. Upload handling is
- *                 in bizupkeep_child_handle_document_upload() in
+ *                 per application (workflow instance) the logged-in
+ *                 client has, each with its own status, the owning
+ *                 company's already-uploaded documents, and an upload
+ *                 form while that specific application is waiting on
+ *                 documents. Upload handling is in
+ *                 bizupkeep_child_handle_document_upload() in
  *                 functions.php (runs on template_redirect, before
  *                 this template renders, so it can redirect on
  *                 success/failure). This page is only reachable while
@@ -37,7 +38,7 @@ $sections = bizupkeep_child_documents_sections( get_current_user_id() );
 
 		<?php if ( array() === $sections ) : ?>
 
-			<p><?php esc_html_e( "You don't have any company registrations in progress yet.", 'bizupkeep-astra-child' ); ?></p>
+			<p><?php esc_html_e( "You don't have any applications in progress yet.", 'bizupkeep-astra-child' ); ?></p>
 			<p>
 				<a href="<?php echo esc_url( home_url( '/apply/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
 					<?php esc_html_e( 'Start an Application', 'bizupkeep-astra-child' ); ?>
@@ -48,6 +49,7 @@ $sections = bizupkeep_child_documents_sections( get_current_user_id() );
 
 			<?php foreach ( $sections as $section ) : ?>
 				<section class="bizupkeep-company-documents">
+					<span class="bizupkeep-workflow-type-badge"><?php echo esc_html( $section['workflow_type_label'] ); ?></span>
 					<h2><?php echo esc_html( $section['company_name'] ); ?></h2>
 					<span class="bizupkeep-status-pill"><?php echo esc_html( $section['status_label'] ); ?></span>
 
@@ -68,21 +70,21 @@ $sections = bizupkeep_child_documents_sections( get_current_user_id() );
 					<?php if ( $section['can_upload'] ) : ?>
 						<form method="post" enctype="multipart/form-data" class="bizupkeep-upload-form">
 							<?php wp_nonce_field( 'bizupkeep_upload_document', 'bizupkeep_upload_nonce' ); ?>
-							<input type="hidden" name="company_uuid" value="<?php echo esc_attr( $section['company_uuid'] ); ?>">
+							<input type="hidden" name="workflow_uuid" value="<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
 
-							<label for="bizupkeep-category-<?php echo esc_attr( $section['company_uuid'] ); ?>">
+							<label for="bizupkeep-category-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
 								<?php esc_html_e( 'Document Type', 'bizupkeep-astra-child' ); ?>
 							</label>
-							<select id="bizupkeep-category-<?php echo esc_attr( $section['company_uuid'] ); ?>" name="category" required>
+							<select id="bizupkeep-category-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="category" required>
 								<option value=""><?php esc_html_e( 'Select an option', 'bizupkeep-astra-child' ); ?></option>
 								<option value="id_document"><?php esc_html_e( 'ID Document', 'bizupkeep-astra-child' ); ?></option>
 								<option value="proof_of_address"><?php esc_html_e( 'Proof of Address', 'bizupkeep-astra-child' ); ?></option>
 							</select>
 
-							<label for="bizupkeep-file-<?php echo esc_attr( $section['company_uuid'] ); ?>">
+							<label for="bizupkeep-file-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
 								<?php esc_html_e( 'File (PDF, JPG or PNG, max 5MB)', 'bizupkeep-astra-child' ); ?>
 							</label>
-							<input type="file" id="bizupkeep-file-<?php echo esc_attr( $section['company_uuid'] ); ?>" name="document" accept=".pdf,.jpg,.jpeg,.png" required>
+							<input type="file" id="bizupkeep-file-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="document" accept=".pdf,.jpg,.jpeg,.png" required>
 
 							<p>
 								<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">

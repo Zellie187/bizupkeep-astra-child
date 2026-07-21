@@ -26,6 +26,8 @@ use BizHub\Companies\Entities\CompanyStatus;
 use BizHub\Documents\Entities\DocumentCategory;
 use BizHub\Documents\Services\DocumentService;
 use BizHub\Workflow\Contracts\WorkflowRepositoryInterface;
+use BizHub\Workflow\Contracts\WorkflowTypeServiceInterface;
+use BizHub\Workflow\Entities\WorkflowInstance;
 use BizHub\Workflow\Enums\WorkflowStatus;
 use BizHub\Workflow\Workflows\AnnualReturn\AnnualReturnDefinition;
 use BizHub\Workflow\Workflows\AnnualReturn\AnnualReturnService;
@@ -34,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.9.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.10.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -1301,25 +1303,34 @@ function bizupkeep_child_handle_document_upload(): void {
 
 	check_admin_referer( 'bizupkeep_upload_document', 'bizupkeep_upload_nonce' );
 
-	$wp_user_id   = get_current_user_id();
-	$company_uuid = isset( $_POST['company_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['company_uuid'] ) ) : '';
-	$category_raw = isset( $_POST['category'] ) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : '';
+	$wp_user_id    = get_current_user_id();
+	$workflow_uuid = isset( $_POST['workflow_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['workflow_uuid'] ) ) : '';
+	$category_raw  = isset( $_POST['category'] ) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : '';
 
-	$result = bizupkeep_child_process_document_upload( $wp_user_id, $company_uuid, $category_raw );
+	$result = bizupkeep_child_process_document_upload( $wp_user_id, $workflow_uuid, $category_raw );
 
 	wp_safe_redirect( add_query_arg( $result ? 'uploaded' : 'upload_error', '1', get_permalink() ) );
 	exit;
 }
 
 /**
- * Validate and store an uploaded document, then advance the workflow
- * if that completes the required set. Returns false (rather than
- * throwing) on any failure - ownership checks, file validation, and
- * BizHub service calls are all treated as "show a generic error", not
- * something that should ever surface as a fatal error page from a
- * public-facing form submission.
+ * Validate and store an uploaded document against a specific
+ * application (workflow instance), then advance that same workflow if
+ * the upload completes its required document set. Returns false
+ * (rather than throwing) on any failure - ownership checks, file
+ * validation, and BizHub service calls are all treated as "show a
+ * generic error", not something that should ever surface as a fatal
+ * error page from a public-facing form submission.
+ *
+ * Takes a workflow UUID, not a company UUID: a company can have
+ * several applications in flight at once (e.g. a completed
+ * registration and a fresh amendment), so "which application is this
+ * upload for" has to be explicit, not inferred by guessing "the
+ * company's most recent workflow" - see
+ * bizupkeep_child_get_owned_workflow_instance()'s docblock for the bug
+ * this replaced.
  */
-function bizupkeep_child_process_document_upload( int $wp_user_id, string $company_uuid, string $category_raw ): bool {
+function bizupkeep_child_process_document_upload( int $wp_user_id, string $workflow_uuid, string $category_raw ): bool {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
 		return false;
 	}
@@ -1337,16 +1348,16 @@ function bizupkeep_child_process_document_upload( int $wp_user_id, string $compa
 
 	$category = $allowed_categories[ $category_raw ];
 
-	$company = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$workflow = bizupkeep_child_get_owned_workflow_instance( $wp_user_id, $workflow_uuid );
 
-	if ( null === $company ) {
+	if ( null === $workflow ) {
 		return false;
 	}
 
-	// Only accept uploads while the workflow is actually waiting on
-	// documents - not before (company just created, nothing requested
-	// yet) and not after (already verified/moved on).
-	if ( WorkflowStatus::PendingDocuments !== bizupkeep_child_company_workflow_status( $company_uuid ) ) {
+	// Only accept uploads while this specific application is actually
+	// waiting on documents - not before (just created, nothing
+	// requested yet) and not after (already verified/moved on).
+	if ( WorkflowStatus::PendingDocuments !== $workflow->getStatus() ) {
 		return false;
 	}
 
@@ -1361,7 +1372,7 @@ function bizupkeep_child_process_document_upload( int $wp_user_id, string $compa
 
 		$documents->uploadDocument(
 			'company',
-			$company_uuid,
+			$workflow->getSubjectUuid(),
 			$file['name'],
 			$category,
 			$file['tmp_name'],
@@ -1372,7 +1383,7 @@ function bizupkeep_child_process_document_upload( int $wp_user_id, string $compa
 		return false;
 	}
 
-	bizupkeep_child_maybe_verify_documents( $company_uuid, $wp_user_id );
+	bizupkeep_child_maybe_verify_documents( $workflow, $wp_user_id );
 
 	return true;
 }
@@ -1478,58 +1489,95 @@ function bizupkeep_child_get_owned_company( int $wp_user_id, string $company_uui
 }
 
 /**
- * Find a company's current Company Registration workflow instance, or
- * null if it has none at all. Goes directly to
- * WorkflowRepositoryInterface rather than CompanyRegistrationService,
- * since the Service (and WorkflowEngineInterface underneath it) only
- * expose find-by-workflow-uuid, not find-by-subject - the repository
- * is the only layer with findForSubject(). A company created by this
- * theme always has exactly one workflow instance, but takes the most
- * recently created if more than one is ever found.
+ * Look up a workflow instance by UUID and confirm it belongs to a
+ * company owned by the given WordPress user's client record. Returns
+ * null if the workflow doesn't exist, its company doesn't exist, or
+ * the company belongs to someone else - the caller should treat all
+ * three identically (generic failure), the same ownership-
+ * re-verification pattern bizupkeep_child_get_owned_company() already
+ * uses.
+ *
+ * This is the fix for a real bug: every caller of this function used
+ * to instead call a "find the company's workflow" helper that ignored
+ * workflow type entirely and just took whichever instance was created
+ * most recently - fine when Company Registration was the only
+ * workflow type a company could have, wrong now that a company can
+ * simultaneously have (for example) a completed registration and a
+ * brand new amendment. Callers must now say which specific
+ * application (workflow UUID) they mean, the same way the URL/form
+ * already identifies a specific application everywhere else (Quality
+ * Review, the apply form's company pickers).
  */
-function bizupkeep_child_find_company_workflow_instance( string $company_uuid ) {
-	$workflows = bizhub()->container()->get( WorkflowRepositoryInterface::class );
-
-	$instances = $workflows->findForSubject( 'company', $company_uuid );
-
-	if ( array() === $instances ) {
+function bizupkeep_child_get_owned_workflow_instance( int $wp_user_id, string $workflow_uuid ): ?WorkflowInstance {
+	if ( '' === $workflow_uuid ) {
 		return null;
 	}
 
-	usort(
-		$instances,
-		static function ( $a, $b ) {
-			return $b->getCreatedAt() <=> $a->getCreatedAt();
-		}
-	);
+	$workflows = bizhub()->container()->get( WorkflowRepositoryInterface::class );
+	$workflow  = $workflows->find( $workflow_uuid );
 
-	return $instances[0];
+	if ( null === $workflow || 'company' !== $workflow->getSubjectType() ) {
+		return null;
+	}
+
+	$company = bizupkeep_child_get_owned_company( $wp_user_id, $workflow->getSubjectUuid() );
+
+	return null === $company ? null : $workflow;
 }
 
 /**
- * Get a company's current Company Registration workflow status, or
- * null if it has no workflow instance at all.
+ * Resolve a workflow type string to its own Service class - the only
+ * path that may touch the workflow engine for that type. Mirrors
+ * BizHub\Workflow\Admin\QualityReviewPage::serviceFor() in the
+ * bizupkeep-workflow plugin, which resolves the same
+ * WorkflowTypeServiceInterface-implementing classes for the same
+ * reason (code that operates on a workflow instance without knowing
+ * its concrete type in advance).
  */
-function bizupkeep_child_company_workflow_status( string $company_uuid ): ?WorkflowStatus {
-	$instance = bizupkeep_child_find_company_workflow_instance( $company_uuid );
-
-	return $instance?->getStatus();
+function bizupkeep_child_workflow_type_service( string $workflow_type ): WorkflowTypeServiceInterface {
+	return match ( $workflow_type ) {
+		CompanyAmendmentDefinition::TYPE => bizhub()->container()->get( CompanyAmendmentService::class ),
+		AnnualReturnDefinition::TYPE => bizhub()->container()->get( AnnualReturnService::class ),
+		default => bizhub()->container()->get( CompanyRegistrationService::class ),
+	};
 }
 
 /**
- * If a company now has both required document categories uploaded,
- * advance its workflow from PendingDocuments to DocumentsVerified.
- * Safe to call after every upload - re-checks the current status
- * first, so it's a no-op once already verified (or if the required
- * set still isn't complete).
+ * Human-readable label for a workflow type. Mirrors
+ * QualityReviewPage::typeLabel()/WorkflowAdminMenu::typeLabel() in the
+ * bizupkeep-workflow plugin.
  */
-function bizupkeep_child_maybe_verify_documents( string $company_uuid, int $wp_user_id ): void {
-	if ( WorkflowStatus::PendingDocuments !== bizupkeep_child_company_workflow_status( $company_uuid ) ) {
+function bizupkeep_child_workflow_type_label( string $workflow_type ): string {
+	return match ( $workflow_type ) {
+		CompanyAmendmentDefinition::TYPE => __( 'Company Amendment', 'bizupkeep-astra-child' ),
+		AnnualReturnDefinition::TYPE => __( 'Annual Return', 'bizupkeep-astra-child' ),
+		default => __( 'Company Registration', 'bizupkeep-astra-child' ),
+	};
+}
+
+/**
+ * If a specific application now has both required document categories
+ * uploaded, advance it from PendingDocuments to DocumentsVerified (and
+ * on to AwaitingPayment, since request_payment has no guard for either
+ * Company Registration or Company Amendment - see
+ * CompanyRegistrationGuard/CompanyAmendmentGuard, which only have
+ * explicit cases for verify_documents/confirm_payment/approve). Safe
+ * to call after every upload - re-checks the current status first, so
+ * it's a no-op once already verified (or if the required set still
+ * isn't complete).
+ *
+ * Only ever reached for Company Registration/Amendment (the two types
+ * with a PendingDocuments stage) - see
+ * bizupkeep_child_documents_sections(), which never offers an upload
+ * form for an Annual Return application in the first place.
+ */
+function bizupkeep_child_maybe_verify_documents( WorkflowInstance $workflow, int $wp_user_id ): void {
+	if ( WorkflowStatus::PendingDocuments !== $workflow->getStatus() ) {
 		return;
 	}
 
 	$documents = bizhub()->container()->get( DocumentService::class );
-	$uploaded  = $documents->getDocumentsForOwner( 'company', $company_uuid );
+	$uploaded  = $documents->getDocumentsForOwner( 'company', $workflow->getSubjectUuid() );
 
 	$categories = array_map(
 		static function ( $document ) {
@@ -1544,31 +1592,25 @@ function bizupkeep_child_maybe_verify_documents( string $company_uuid, int $wp_u
 		}
 	}
 
-	$instance = bizupkeep_child_find_company_workflow_instance( $company_uuid );
-
-	if ( null === $instance ) {
-		return;
-	}
-
 	try {
-		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
-		$registration->performAction(
-			$instance->getUuid(),
-			CompanyRegistrationDefinition::ACTION_VERIFY_DOCUMENTS,
+		$service = bizupkeep_child_workflow_type_service( $workflow->getWorkflowType() );
+
+		// 'verify_documents'/'request_payment' are shared action-name
+		// literals across CompanyRegistrationDefinition and
+		// CompanyAmendmentDefinition (both mirror the same 9-action
+		// lifecycle shape) - see ROADMAP.md in bizupkeep-workflow for
+		// why Company Amendment was modelled that way.
+		$service->performAction(
+			$workflow->getUuid(),
+			'verify_documents',
 			$wp_user_id,
 			__( 'Required documents uploaded by client.', 'bizupkeep-astra-child' ),
 			array( 'documents_verified' => true )
 		);
 
-		// ACTION_REQUEST_PAYMENT has no guard (see
-		// CompanyRegistrationGuard::guard(), which only has explicit
-		// cases for verify_documents/confirm_payment/approve) - it's a
-		// free transition once DocumentsVerified, so there's no reason
-		// to wait for a separate trigger before asking the client to
-		// pay.
-		$registration->performAction(
-			$instance->getUuid(),
-			CompanyRegistrationDefinition::ACTION_REQUEST_PAYMENT,
+		$service->performAction(
+			$workflow->getUuid(),
+			'request_payment',
 			$wp_user_id,
 			__( 'Payment requested automatically after document verification.', 'bizupkeep-astra-child' )
 		);
@@ -1580,14 +1622,16 @@ function bizupkeep_child_maybe_verify_documents( string $company_uuid, int $wp_u
 }
 
 /**
- * Build the data the My Documents template needs: one section per
- * company belonging to the logged-in user's client record, each with
- * its current workflow status, already-uploaded documents, and
- * whether uploads are currently accepted (only while PendingDocuments).
+ * Fetch every workflow instance (across all three types) belonging to
+ * companies owned by this WordPress user's client record - the shared
+ * data source for both My Documents and My Applications, each of
+ * which used to instead iterate "one row per company" and silently
+ * guess at a company's "current" workflow. Sorted most-recently-
+ * updated first.
  *
- * @return array<int,array{company_uuid:string,company_name:string,status_label:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>}>
+ * @return array<int,array{instance:WorkflowInstance,company:Company}>
  */
-function bizupkeep_child_documents_sections( int $wp_user_id ): array {
+function bizupkeep_child_client_workflow_instances( int $wp_user_id ): array {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
 		return array();
 	}
@@ -1607,12 +1651,60 @@ function bizupkeep_child_documents_sections( int $wp_user_id ): array {
 	}
 
 	$companies = bizhub()->container()->get( CompanyServiceInterface::class );
-	$documents = bizhub()->container()->get( DocumentService::class );
+	$workflows = bizhub()->container()->get( WorkflowRepositoryInterface::class );
 
-	$sections = array();
+	$rows = array();
 
 	foreach ( $companies->getCompaniesForClient( $client_id ) as $company ) {
-		$status = bizupkeep_child_company_workflow_status( $company->getUuid() );
+		foreach ( $workflows->findForSubject( 'company', $company->getUuid() ) as $instance ) {
+			$rows[] = array(
+				'instance' => $instance,
+				'company'  => $company,
+			);
+		}
+	}
+
+	usort(
+		$rows,
+		static function ( array $a, array $b ): int {
+			$aTime = $a['instance']->getUpdatedAt() ?? $a['instance']->getCreatedAt();
+			$bTime = $b['instance']->getUpdatedAt() ?? $b['instance']->getCreatedAt();
+
+			return $bTime <=> $aTime;
+		}
+	);
+
+	return $rows;
+}
+
+/**
+ * Build the data the My Documents template needs: one section per
+ * application (workflow instance) belonging to the logged-in user's
+ * client record, each with its own status, the owning company's
+ * already-uploaded documents, and whether uploads are currently
+ * accepted (only while that specific application is PendingDocuments).
+ *
+ * Annual Return applications are excluded entirely - that workflow
+ * type has no PendingDocuments stage or document requirement at all
+ * (see AnnualReturnDefinition), so there's nothing for this page to
+ * show for one.
+ *
+ * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>}>
+ */
+function bizupkeep_child_documents_sections( int $wp_user_id ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	$documents = bizhub()->container()->get( DocumentService::class );
+	$sections  = array();
+
+	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
+		$instance = $row['instance'];
+
+		if ( AnnualReturnDefinition::TYPE === $instance->getWorkflowType() ) {
+			continue;
+		}
 
 		$uploaded = array_map(
 			static function ( $document ) {
@@ -1624,15 +1716,16 @@ function bizupkeep_child_documents_sections( int $wp_user_id ): array {
 					'uploaded_at'     => $version ? $version->uploadedAt->format( 'j M Y' ) : '',
 				);
 			},
-			$documents->getDocumentsForOwner( 'company', $company->getUuid() )
+			$documents->getDocumentsForOwner( 'company', $row['company']->getUuid() )
 		);
 
 		$sections[] = array(
-			'company_uuid' => $company->getUuid(),
-			'company_name' => $company->getCompanyName(),
-			'status_label' => null === $status ? __( 'Not started', 'bizupkeep-astra-child' ) : bizupkeep_child_workflow_status_label( $status ),
-			'can_upload'   => WorkflowStatus::PendingDocuments === $status,
-			'documents'    => $uploaded,
+			'workflow_uuid'        => $instance->getUuid(),
+			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
+			'company_name'         => $row['company']->getCompanyName(),
+			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus() ),
+			'can_upload'           => WorkflowStatus::PendingDocuments === $instance->getStatus(),
+			'documents'            => $uploaded,
 		);
 	}
 
@@ -1661,8 +1754,8 @@ function bizupkeep_child_workflow_status_label( WorkflowStatus $status ): string
 }
 
 /**
- * Payment (Company Registration workflow's AwaitingPayment step),
- * via WooCommerce.
+ * Payment (the AwaitingPayment step, shared by all three workflow
+ * types), via WooCommerce.
  *
  * BizHub already has a WooCommerce integration
  * (includes/Integrations/WooCommerce/: ApplicationCreator,
@@ -1670,51 +1763,53 @@ function bizupkeep_child_workflow_status_label( WorkflowStatus $status ): string
  * separate, unrelated system: it creates a brand-new Application for
  * any order containing a product mapped via the `_bizhub_application_type`
  * product meta key, with no link to an existing Company or workflow at
- * all (company_uuid is always null on the applications it creates).
- * Reusing it here would mean fighting its shape rather than building
- * on it, so this is new, separate wiring - it never touches
+ * all. Reusing it here would mean fighting its shape rather than
+ * building on it, so this is new, separate wiring - it never touches
  * ApplicationCreator/OrderListener/ProductMapper, and doesn't create
  * any bizhub_applications rows itself.
  *
  * The core problem this solves: nothing ties a WooCommerce order to a
- * *specific* in-progress company registration. The flow:
- *   1. "Pay Now" on My Applications links to the
- *      "company-registration-packages" product category archive with
- *      ?bizupkeep_pay_for={company_uuid} appended.
+ * *specific* in-progress application. The flow:
+ *   1. "Pay Now" on My Applications links to the packages category
+ *      archive with ?bizupkeep_pay_for={workflow_uuid} appended - the
+ *      *application's* UUID, not the company's, since a company can
+ *      have more than one application and only one of them is the one
+ *      actually being paid for.
  *   2. On that (or any) page load, bizupkeep_child_capture_payment_intent()
- *      verifies the company belongs to the logged-in client and is
- *      actually AwaitingPayment, then stores the UUID in the
+ *      verifies that application belongs to the logged-in client and
+ *      is actually AwaitingPayment, then stores its UUID in the
  *      WooCommerce session - not order meta yet, since no order exists.
  *   3. Whichever package the client actually buys,
- *      bizupkeep_child_attach_company_to_order() copies the session
+ *      bizupkeep_child_attach_workflow_to_order() copies the session
  *      value onto the new order as post meta at checkout, re-verifying
  *      ownership again (a session value could otherwise be replayed
  *      across tabs/accounts).
  *   4. When that order's status changes to processing/completed,
- *      bizupkeep_child_handle_order_payment() reads the company UUID
- *      back off the order and confirms payment on its workflow, using
- *      the order ID as CompanyRegistrationGuard's required
- *      context['payment_reference'].
+ *      bizupkeep_child_handle_order_payment() reads the application
+ *      UUID back off the order and confirms payment on it (dispatched
+ *      to whichever workflow type it actually is via
+ *      bizupkeep_child_workflow_type_service()), using the order ID as
+ *      the guard's required context['payment_reference'].
  */
 
-const BIZUPKEEP_PAYMENT_SESSION_KEY = 'bizupkeep_company_uuid';
+const BIZUPKEEP_PAYMENT_SESSION_KEY = 'bizupkeep_workflow_uuid';
 const BIZUPKEEP_PACKAGES_CATEGORY_SLUG = 'company-registration-packages';
 
 if ( class_exists( 'WooCommerce' ) ) {
 	add_action( 'template_redirect', 'bizupkeep_child_capture_payment_intent' );
-	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_company_to_order', 10, 2 );
+	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_workflow_to_order', 10, 2 );
 	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_order_payment', 10, 4 );
 }
 
 /**
- * Build the "Pay Now" URL for a company: the packages category
- * archive (matching the same category the homepage's
- * [bizupkeep_packages] shortcode already uses), with the company UUID
- * attached as a query arg for bizupkeep_child_capture_payment_intent()
- * to pick up. Falls back to the general shop page if that category
- * doesn't exist, rather than linking somewhere broken.
+ * Build the "Pay Now" URL for a specific application: the packages
+ * category archive (matching the same category the homepage's pricing
+ * cards link into), with the application's workflow UUID attached as
+ * a query arg for bizupkeep_child_capture_payment_intent() to pick up.
+ * Falls back to the general shop page if that category doesn't exist,
+ * rather than linking somewhere broken.
  */
-function bizupkeep_child_payment_url( string $company_uuid ): string {
+function bizupkeep_child_payment_url( string $workflow_uuid ): string {
 	$term = get_term_by( 'slug', BIZUPKEEP_PACKAGES_CATEGORY_SLUG, 'product_cat' );
 	$base = $term instanceof WP_Term ? get_term_link( $term ) : wc_get_page_permalink( 'shop' );
 
@@ -1722,16 +1817,16 @@ function bizupkeep_child_payment_url( string $company_uuid ): string {
 		$base = home_url( '/' );
 	}
 
-	return add_query_arg( 'bizupkeep_pay_for', $company_uuid, $base );
+	return add_query_arg( 'bizupkeep_pay_for', $workflow_uuid, $base );
 }
 
 /**
- * If the current request carries ?bizupkeep_pay_for={company_uuid},
- * verify it belongs to the logged-in client and is actually
- * AwaitingPayment, then remember it in the WooCommerce session for
- * whichever order results from checkout. Runs on every page load
- * (not just a dedicated page) since the client lands directly on a
- * product/category page, not a theme-owned one.
+ * If the current request carries ?bizupkeep_pay_for={workflow_uuid},
+ * verify that application belongs to the logged-in client and is
+ * actually AwaitingPayment, then remember it in the WooCommerce
+ * session for whichever order results from checkout. Runs on every
+ * page load (not just a dedicated page) since the client lands
+ * directly on a product/category page, not a theme-owned one.
  */
 function bizupkeep_child_capture_payment_intent(): void {
 	if ( ! isset( $_GET['bizupkeep_pay_for'] ) || ! is_user_logged_in() ) {
@@ -1742,36 +1837,32 @@ function bizupkeep_child_capture_payment_intent(): void {
 		return;
 	}
 
-	$company_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_pay_for'] ) );
-	$company      = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_pay_for'] ) );
+	$workflow      = bizupkeep_child_get_owned_workflow_instance( get_current_user_id(), $workflow_uuid );
 
-	if ( null === $company ) {
+	if ( null === $workflow || WorkflowStatus::AwaitingPayment !== $workflow->getStatus() ) {
 		return;
 	}
 
-	if ( WorkflowStatus::AwaitingPayment !== bizupkeep_child_company_workflow_status( $company_uuid ) ) {
-		return;
-	}
-
-	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $company_uuid );
+	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $workflow_uuid );
 }
 
 /**
- * At checkout, copy the pending company UUID from the WooCommerce
- * session onto the new order as post meta, so it survives past the
- * session into something permanently queryable against the order.
- * Re-verifies ownership again here rather than trusting the session
- * value blindly - it could otherwise be replayed by switching
+ * At checkout, copy the pending application's workflow UUID from the
+ * WooCommerce session onto the new order as post meta, so it survives
+ * past the session into something permanently queryable against the
+ * order. Re-verifies ownership again here rather than trusting the
+ * session value blindly - it could otherwise be replayed by switching
  * accounts in another tab before completing checkout.
  */
-function bizupkeep_child_attach_company_to_order( WC_Order $order, array $data ): void {
+function bizupkeep_child_attach_workflow_to_order( WC_Order $order, array $data ): void {
 	if ( null === WC()->session ) {
 		return;
 	}
 
-	$company_uuid = WC()->session->get( BIZUPKEEP_PAYMENT_SESSION_KEY );
+	$workflow_uuid = WC()->session->get( BIZUPKEEP_PAYMENT_SESSION_KEY );
 
-	if ( ! is_string( $company_uuid ) || '' === $company_uuid ) {
+	if ( ! is_string( $workflow_uuid ) || '' === $workflow_uuid ) {
 		return;
 	}
 
@@ -1779,20 +1870,21 @@ function bizupkeep_child_attach_company_to_order( WC_Order $order, array $data )
 
 	$wp_user_id = get_current_user_id();
 
-	if ( 0 === $wp_user_id || null === bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid ) ) {
+	if ( 0 === $wp_user_id || null === bizupkeep_child_get_owned_workflow_instance( $wp_user_id, $workflow_uuid ) ) {
 		return;
 	}
 
-	$order->update_meta_data( '_bizupkeep_company_uuid', $company_uuid );
+	$order->update_meta_data( '_bizupkeep_workflow_uuid', $workflow_uuid );
 }
 
 /**
  * When an order's status changes to processing or completed, confirm
- * payment on the company registration workflow it was attached to (if
- * any) - moving AwaitingPayment to Processing. Guarded so this only
- * ever fires once per order (mirrors the idempotency pattern
+ * payment on the application it was attached to (if any) - moving
+ * AwaitingPayment to Processing, dispatched to whichever workflow type
+ * that application actually is. Guarded so this only ever fires once
+ * per order (mirrors the idempotency pattern
  * Integrations/WooCommerce/OrderListener.php already uses for its own,
- * unrelated purpose) and only while the workflow is genuinely still
+ * unrelated purpose) and only while the application is genuinely still
  * waiting on payment.
  */
 function bizupkeep_child_handle_order_payment( int $order_id, string $old_status, string $new_status, WC_Order $order ): void {
@@ -1804,9 +1896,9 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
 		return;
 	}
 
-	$company_uuid = $order->get_meta( '_bizupkeep_company_uuid' );
+	$workflow_uuid = $order->get_meta( '_bizupkeep_workflow_uuid' );
 
-	if ( ! is_string( $company_uuid ) || '' === $company_uuid ) {
+	if ( ! is_string( $workflow_uuid ) || '' === $workflow_uuid ) {
 		return;
 	}
 
@@ -1814,17 +1906,21 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
 		return;
 	}
 
-	$instance = bizupkeep_child_find_company_workflow_instance( $company_uuid );
+	$workflows = bizhub()->container()->get( WorkflowRepositoryInterface::class );
+	$instance  = $workflows->find( $workflow_uuid );
 
 	if ( null === $instance || WorkflowStatus::AwaitingPayment !== $instance->getStatus() ) {
 		return;
 	}
 
 	try {
-		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
-		$registration->performAction(
+		$service = bizupkeep_child_workflow_type_service( $instance->getWorkflowType() );
+
+		// 'confirm_payment' is a shared action-name literal across all
+		// three workflow type Definitions.
+		$service->performAction(
 			$instance->getUuid(),
-			CompanyRegistrationDefinition::ACTION_CONFIRM_PAYMENT,
+			'confirm_payment',
 			(int) $order->get_customer_id(),
 			sprintf(
 				/* translators: %d: WooCommerce order ID. */
@@ -1843,44 +1939,26 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
 }
 
 /**
- * Build the data the My Applications template needs: one section per
- * company belonging to the logged-in user's client record, with its
- * current workflow status and (only while AwaitingPayment) a "Pay Now"
- * link.
+ * Build the data the My Applications template needs: one row per
+ * application (workflow instance) belonging to the logged-in user's
+ * client record, across all three workflow types, with its own status
+ * and (only while that specific application is AwaitingPayment) a
+ * "Pay Now" link.
  *
- * @return array<int,array{company_name:string,status_label:string,pay_url:?string}>
+ * @return array<int,array{workflow_type_label:string,company_name:string,status_label:string,pay_url:?string}>
  */
 function bizupkeep_child_applications_sections( int $wp_user_id ): array {
-	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
-		return array();
-	}
-
-	$clients = bizhub()->container()->get( ClientServiceInterface::class );
-
-	try {
-		$client = $clients->getClientByWpUserId( $wp_user_id );
-	} catch ( ClientNotFoundException $e ) {
-		return array();
-	}
-
-	$client_id = $client->getId();
-
-	if ( null === $client_id ) {
-		return array();
-	}
-
-	$companies = bizhub()->container()->get( CompanyServiceInterface::class );
-
 	$sections = array();
 
-	foreach ( $companies->getCompaniesForClient( $client_id ) as $company ) {
-		$status = bizupkeep_child_company_workflow_status( $company->getUuid() );
+	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
+		$instance = $row['instance'];
 
 		$sections[] = array(
-			'company_name' => $company->getCompanyName(),
-			'status_label' => null === $status ? __( 'Not started', 'bizupkeep-astra-child' ) : bizupkeep_child_workflow_status_label( $status ),
-			'pay_url'       => WorkflowStatus::AwaitingPayment === $status
-				? ( class_exists( 'WooCommerce' ) ? bizupkeep_child_payment_url( $company->getUuid() ) : null )
+			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
+			'company_name'         => $row['company']->getCompanyName(),
+			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus() ),
+			'pay_url'              => WorkflowStatus::AwaitingPayment === $instance->getStatus()
+				? ( class_exists( 'WooCommerce' ) ? bizupkeep_child_payment_url( $instance->getUuid() ) : null )
 				: null,
 		);
 	}

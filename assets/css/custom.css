@@ -518,6 +518,19 @@
 	color: var(--bizupkeep-primary);
 }
 
+.bizupkeep-workflow-type-badge {
+	display: inline-block;
+	margin-bottom: 8px;
+	padding: 3px 10px;
+	border-radius: 4px;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	background: var(--bizupkeep-primary);
+	color: #ffffff;
+}
+
 .bizupkeep-applications-table,
 .bizupkeep-documents-table {
 	width: 100%;
