@@ -1,0 +1,14 @@
+/*
+Theme Name:   BizUpKeep Astra Child
+Theme URI:    https://bizupkeep.co.za
+Description:  Child theme of Astra for the BizUpKeep / A2Z Business Administrators platform.
+Author:       A2Z Business Administrators
+Author URI:   https://bizupkeep.co.za
+Template:     astra
+Version:      1.9.0
+Text Domain:  bizupkeep-astra-child
+*/
+
+/* Theme base styles are enqueued via functions.php. This file is required by
+   WordPress for the child theme to be recognised; component styles live in
+   assets/css/custom.css. */

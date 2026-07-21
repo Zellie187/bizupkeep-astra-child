@@ -1,0 +1,1889 @@
+<?php
+/**
+ * BizUpKeep Astra Child theme functions.
+ *
+ * @package BizUpKeep_Astra_Child
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+use BizHub\Applications\Contracts\ApplicationServiceInterface;
+use BizHub\Applications\DTO\ApplicationData;
+use BizHub\Applications\Services\ApplicationWorkflowService;
+use BizHub\ClientPortal\Contracts\ClientServiceInterface;
+use BizHub\ClientPortal\DTO\ClientData;
+use BizHub\ClientPortal\DTO\ProfileData;
+use BizHub\ClientPortal\Exceptions\ClientNotFoundException;
+use BizHub\Companies\Contracts\CompanyServiceInterface;
+use BizHub\Companies\Contracts\DirectorRepositoryInterface;
+use BizHub\Companies\DTO\AddressData;
+use BizHub\Companies\DTO\CompanyData;
+use BizHub\Companies\DTO\DirectorData;
+use BizHub\Companies\Entities\Company;
+use BizHub\Companies\Entities\CompanyStatus;
+use BizHub\Documents\Entities\DocumentCategory;
+use BizHub\Documents\Services\DocumentService;
+use BizHub\Workflow\Contracts\WorkflowRepositoryInterface;
+use BizHub\Workflow\Enums\WorkflowStatus;
+use BizHub\Workflow\Workflows\AnnualReturn\AnnualReturnDefinition;
+use BizHub\Workflow\Workflows\AnnualReturn\AnnualReturnService;
+use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentDefinition;
+use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
+use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
+use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
+
+define( 'BIZUPKEEP_CHILD_VERSION', '1.9.0' );
+define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
+
+/**
+ * Enqueue parent and child theme styles/scripts.
+ */
+function bizupkeep_child_enqueue_assets(): void {
+	wp_enqueue_style(
+		'astra-parent-style',
+		get_template_directory_uri() . '/style.css',
+		array(),
+		BIZUPKEEP_CHILD_VERSION
+	);
+
+	wp_enqueue_style(
+		'bizupkeep-child-style',
+		get_stylesheet_uri(),
+		array( 'astra-parent-style' ),
+		BIZUPKEEP_CHILD_VERSION
+	);
+
+	wp_enqueue_style(
+		'bizupkeep-custom',
+		BIZUPKEEP_CHILD_URI . '/assets/css/custom.css',
+		array( 'bizupkeep-child-style' ),
+		BIZUPKEEP_CHILD_VERSION
+	);
+
+	wp_enqueue_script(
+		'bizupkeep-custom',
+		BIZUPKEEP_CHILD_URI . '/assets/js/custom.js',
+		array(),
+		BIZUPKEEP_CHILD_VERSION,
+		true
+	);
+}
+add_action( 'wp_enqueue_scripts', 'bizupkeep_child_enqueue_assets' );
+
+/**
+ * Register the custom homepage page template.
+ *
+ * @param array $templates Existing page templates.
+ * @return array
+ */
+function bizupkeep_child_register_page_templates( array $templates ): array {
+	$templates['page-templates/template-homepage.php']    = __( 'BizUpKeep Homepage', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-apply.php']       = __( 'BizUpKeep Apply', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-documents.php']   = __( 'BizUpKeep My Documents', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-applications.php'] = __( 'BizUpKeep My Applications', 'bizupkeep-astra-child' );
+
+	return $templates;
+}
+add_filter( 'theme_page_templates', 'bizupkeep_child_register_page_templates' );
+
+/**
+ * Register theme supports.
+ */
+function bizupkeep_child_setup(): void {
+	add_theme_support( 'title-tag' );
+	add_theme_support( 'post-thumbnails' );
+
+	register_nav_menus(
+		array(
+			'bizupkeep-primary'       => __( 'Primary Menu', 'bizupkeep-astra-child' ),
+			'bizupkeep-footer'        => __( 'Footer Menu', 'bizupkeep-astra-child' ),
+			'bizupkeep-client-portal' => __( 'Client Portal Menu', 'bizupkeep-astra-child' ),
+		)
+	);
+}
+add_action( 'after_setup_theme', 'bizupkeep_child_setup' );
+
+/**
+ * Register footer widget area.
+ */
+function bizupkeep_child_widgets_init(): void {
+	register_sidebar(
+		array(
+			'name'          => __( 'Footer Widget Area', 'bizupkeep-astra-child' ),
+			'id'            => 'bizupkeep-footer-widgets',
+			'before_widget' => '<div class="bizupkeep-footer-widget">',
+			'after_widget'  => '</div>',
+			'before_title'  => '<h3 class="bizupkeep-footer-widget-title">',
+			'after_title'   => '</h3>',
+		)
+	);
+}
+add_action( 'widgets_init', 'bizupkeep_child_widgets_init' );
+
+/**
+ * Client Portal navigation menu.
+ *
+ * BizHub's ClientPortal module (see the bizhub plugin's
+ * includes/ClientPortal/) is currently backend-only: it exposes REST
+ * endpoints (/wp-json/bizhub/v1/companies, /documents, /applications,
+ * /profile) but no rendered front-end pages yet. This creates a small
+ * set of placeholder Pages - styled with the Member Portal classes
+ * already defined in assets/css/custom.css rather than plain text, so
+ * they read as part of the site instead of a bolted-on stub - plus a
+ * menu linking them. The dashboard entry reuses the existing
+ * "Client Portal" page (already published and linked in the primary
+ * menu) rather than creating a competing one; the other four pages
+ * nest underneath it. Swap each page's content for a real template
+ * (or a shortcode backed by those REST endpoints, the same pattern
+ * [bizupkeep_packages] already uses on the homepage) as the portal
+ * front-end gets built - the menu links to the pages by ID, not
+ * hardcoded markup, so nothing here needs to change to support that.
+ */
+
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_client_portal' );
+
+/**
+ * Idempotently create the client portal placeholder pages and nav
+ * menu. Safe to run on every theme activation: each page and menu
+ * item is looked up before creating anything, so re-activating the
+ * theme never creates duplicates, and an existing "Client Portal"
+ * page is reused (never overwritten) rather than duplicated.
+ */
+function bizupkeep_child_setup_client_portal(): void {
+	$dashboard_id = bizupkeep_child_get_or_create_page(
+		'client-portal',
+		__( 'Client Portal', 'bizupkeep-astra-child' ),
+		bizupkeep_child_portal_placeholder(
+			__( 'Your dashboard will show your companies, documents, applications and account activity at a glance.', 'bizupkeep-astra-child' )
+		),
+		0
+	);
+
+	$children = array(
+		'client-portal-companies'    => __( 'My Companies', 'bizupkeep-astra-child' ),
+		'client-portal-documents'    => __( 'My Documents', 'bizupkeep-astra-child' ),
+		'client-portal-applications' => __( 'My Applications', 'bizupkeep-astra-child' ),
+		'client-portal-profile'      => __( 'My Profile', 'bizupkeep-astra-child' ),
+	);
+
+	// All five land under one "Client Portal" dropdown instead of each
+	// getting its own top-level nav slot - see
+	// bizupkeep_child_sync_client_portal_menu() for how the parent item
+	// is created and the pages below are nested under it.
+	$menu_targets = array(
+		array(
+			'title'   => __( 'Dashboard', 'bizupkeep-astra-child' ),
+			'page_id' => $dashboard_id,
+		),
+	);
+
+	foreach ( $children as $slug => $title ) {
+		$page_id = bizupkeep_child_get_or_create_page(
+			$slug,
+			$title,
+			bizupkeep_child_portal_child_placeholder( $slug, $title ),
+			$dashboard_id
+		);
+
+		if ( 'client-portal-documents' === $slug && 0 !== $page_id ) {
+			update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-documents.php' );
+		}
+
+		if ( 'client-portal-applications' === $slug && 0 !== $page_id ) {
+			update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-applications.php' );
+		}
+
+		$menu_targets[] = array(
+			'title'   => $title,
+			'page_id' => $page_id,
+		);
+	}
+
+	bizupkeep_child_sync_client_portal_menu( $dashboard_id, $menu_targets );
+}
+
+/**
+ * Look up a page's ID by slug and parent, without creating anything.
+ *
+ * Deliberately does not use get_page_by_path(): for a single-segment
+ * path (no "/"), it only matches top-level pages (post_parent = 0),
+ * which would silently miss the nested child pages here. Looking up
+ * by post_name + post_parent directly is correct regardless of
+ * nesting depth. Returns 0 if no matching page exists.
+ */
+function bizupkeep_child_find_page( string $slug, int $parent_id = 0 ): int {
+	$existing = get_posts(
+		array(
+			'post_type'   => 'page',
+			'name'        => $slug,
+			'post_parent' => $parent_id,
+			'post_status' => array( 'publish', 'draft', 'pending', 'private' ),
+			'numberposts' => 1,
+		)
+	);
+
+	return empty( $existing ) ? 0 : $existing[0]->ID;
+}
+
+/**
+ * Find an existing page by slug, or create it.
+ */
+function bizupkeep_child_get_or_create_page( string $slug, string $title, string $content, int $parent_id = 0 ): int {
+	$existing_id = bizupkeep_child_find_page( $slug, $parent_id );
+
+	if ( 0 !== $existing_id ) {
+		return $existing_id;
+	}
+
+	$page_id = wp_insert_post(
+		array(
+			'post_title'   => $title,
+			'post_name'    => $slug,
+			'post_content' => $content,
+			'post_status'  => 'publish',
+			'post_type'    => 'page',
+			'post_parent'  => $parent_id,
+		),
+		true
+	);
+
+	return is_wp_error( $page_id ) ? 0 : $page_id;
+}
+
+/**
+ * Placeholder content for the dashboard page, styled with the
+ * existing .bizupkeep-status-pill class from assets/css/custom.css.
+ */
+function bizupkeep_child_portal_placeholder( string $body ): string {
+	return sprintf(
+		"<!-- wp:html -->\n<p><span class=\"bizupkeep-status-pill\">%s</span></p>\n<p>%s</p>\n<!-- /wp:html -->\n",
+		esc_html__( 'Coming Soon', 'bizupkeep-astra-child' ),
+		esc_html( $body )
+	);
+}
+
+/**
+ * Placeholder content for a child portal page. Documents and
+ * Applications reuse the matching real table classes (with a single
+ * empty-state row) so they already look like the finished feature;
+ * Companies and Profile get the same status-pill treatment as the
+ * dashboard, since there's no matching table class for those yet.
+ */
+function bizupkeep_child_portal_child_placeholder( string $slug, string $title ): string {
+	if ( 'client-portal-documents' === $slug ) {
+		return bizupkeep_child_portal_table_placeholder(
+			'bizupkeep-documents-table',
+			__( 'No documents yet - check back soon.', 'bizupkeep-astra-child' )
+		);
+	}
+
+	if ( 'client-portal-applications' === $slug ) {
+		return bizupkeep_child_portal_table_placeholder(
+			'bizupkeep-applications-table',
+			__( 'No applications yet - check back soon.', 'bizupkeep-astra-child' )
+		);
+	}
+
+	return bizupkeep_child_portal_placeholder(
+		sprintf(
+			/* translators: %s: portal page title, e.g. "My Companies". */
+			__( 'The %s section is coming soon.', 'bizupkeep-astra-child' ),
+			$title
+		)
+	);
+}
+
+/**
+ * A single-column placeholder table using one of the real Member
+ * Portal table classes, so the empty state matches what the finished
+ * page will look like once it's wired to real data.
+ */
+function bizupkeep_child_portal_table_placeholder( string $table_class, string $empty_message ): string {
+	return sprintf(
+		"<!-- wp:html -->\n<table class=\"%s\"><tbody><tr><td>%s</td></tr></tbody></table>\n<!-- /wp:html -->\n",
+		esc_attr( $table_class ),
+		esc_html( $empty_message )
+	);
+}
+
+/**
+ * Create (or reuse) the "Client Portal" nav menu with a single
+ * top-level "Client Portal" item, and nest Dashboard/My Companies/
+ * My Documents/My Applications/My Profile underneath it as a dropdown
+ * - rather than each getting its own top-level slot, which is how
+ * this used to render (see bizupkeep_child_render_portal_nav()'s
+ * depth argument for the other half of this change). Assigns the
+ * menu to the client portal menu location.
+ *
+ * The parent item is a *custom* link (to the dashboard page's URL),
+ * not a page-object item pointing at $dashboard_id - Dashboard is
+ * also one of the five children below, and a page-object item can
+ * only ever represent one menu entry per page, so the parent can't
+ * be "the same page-object link as the Dashboard child" without the
+ * two colliding into a single item.
+ *
+ * @param int                                       $dashboard_id The "Client Portal" page's ID, used as
+ *                                                                 the parent item's link URL and as the
+ *                                                                 target of its own "Dashboard" child entry.
+ * @param array<int,array{title:string,page_id:int}> $menu_targets Dashboard + its four sibling pages, in
+ *                                                                 the order they should appear.
+ */
+function bizupkeep_child_sync_client_portal_menu( int $dashboard_id, array $menu_targets ): void {
+	$menu_name = __( 'Client Portal', 'bizupkeep-astra-child' );
+	$menu      = wp_get_nav_menu_object( $menu_name );
+
+	if ( ! $menu ) {
+		$menu_id = wp_create_nav_menu( $menu_name );
+
+		if ( is_wp_error( $menu_id ) ) {
+			return;
+		}
+	} else {
+		$menu_id = $menu->term_id;
+	}
+
+	$existing_items = wp_get_nav_menu_items( $menu_id ) ?: array();
+	$dashboard_url  = get_permalink( $dashboard_id );
+
+	if ( false === $dashboard_url ) {
+		return;
+	}
+
+	// The parent item is identified by its custom URL (matching the
+	// dashboard page) rather than its title, so a later copy edit to
+	// the label doesn't cause a duplicate parent item to be created.
+	$parent_item = null;
+
+	foreach ( $existing_items as $item ) {
+		if ( 'custom' === $item->type && 0 === (int) $item->menu_item_parent && untrailingslashit( $item->url ) === untrailingslashit( $dashboard_url ) ) {
+			$parent_item = $item;
+			break;
+		}
+	}
+
+	if ( null === $parent_item ) {
+		$parent_menu_item_id = wp_update_nav_menu_item(
+			$menu_id,
+			0,
+			array(
+				'menu-item-title'     => __( 'Client Portal', 'bizupkeep-astra-child' ),
+				'menu-item-url'       => $dashboard_url,
+				'menu-item-type'      => 'custom',
+				'menu-item-status'    => 'publish',
+				'menu-item-parent-id' => 0,
+				'menu-item-position'  => 1,
+			)
+		);
+
+		if ( is_wp_error( $parent_menu_item_id ) ) {
+			return;
+		}
+	} else {
+		$parent_menu_item_id = $parent_item->ID;
+	}
+
+	// Sites that already ran the old (flat, one-top-level-item-per-page)
+	// version of this menu have Dashboard/My Companies/My Documents/
+	// My Applications/My Profile each sitting at menu_item_parent = 0 -
+	// those existing items are re-parented in place below rather than
+	// duplicated, since they're identified by their target page, not
+	// their current position in the tree.
+	$existing_by_page_id = array();
+
+	foreach ( $existing_items as $item ) {
+		if ( 'page' === $item->object && (int) $item->ID !== $parent_menu_item_id ) {
+			$existing_by_page_id[ (int) $item->object_id ] = $item;
+		}
+	}
+
+	$position = 0;
+
+	foreach ( $menu_targets as $target ) {
+		if ( 0 === $target['page_id'] ) {
+			continue;
+		}
+
+		$position++;
+		$existing_child = $existing_by_page_id[ $target['page_id'] ] ?? null;
+
+		if (
+			null !== $existing_child
+			&& (int) $existing_child->menu_item_parent === $parent_menu_item_id
+			&& (int) $existing_child->menu_order === $position
+		) {
+			continue;
+		}
+
+		wp_update_nav_menu_item(
+			$menu_id,
+			$existing_child->ID ?? 0,
+			array(
+				'menu-item-title'     => $target['title'],
+				'menu-item-object-id' => $target['page_id'],
+				'menu-item-object'    => 'page',
+				'menu-item-type'      => 'post_type',
+				'menu-item-status'    => 'publish',
+				'menu-item-parent-id' => $parent_menu_item_id,
+				'menu-item-position'  => $position,
+			)
+		);
+	}
+
+	$locations = get_theme_mod( 'nav_menu_locations', array() );
+
+	if ( empty( $locations['bizupkeep-client-portal'] ) ) {
+		$locations['bizupkeep-client-portal'] = $menu_id;
+		set_theme_mod( 'nav_menu_locations', $locations );
+	}
+}
+
+/**
+ * Render the client portal menu as a slim utility bar above the main
+ * site header. depth => 2 (one level of children) lets the "Client
+ * Portal" parent item's five children render as a dropdown - see
+ * bizupkeep_child_sync_client_portal_menu() for how that structure is
+ * built. Dropdown open/close is handled by .bizupkeep-portal-menu's
+ * CSS (hover/focus) plus the tap-to-toggle JS in assets/js/custom.js,
+ * since :hover alone doesn't work on touch devices.
+ */
+function bizupkeep_child_render_portal_nav(): void {
+	if ( ! has_nav_menu( 'bizupkeep-client-portal' ) ) {
+		return;
+	}
+
+	wp_nav_menu(
+		array(
+			'theme_location'  => 'bizupkeep-client-portal',
+			'container'       => 'div',
+			'container_class' => 'bizupkeep-portal-bar',
+			'menu_class'      => 'bizupkeep-portal-menu',
+			'fallback_cb'     => false,
+			'depth'           => 2,
+		)
+	);
+}
+add_action( 'wp_body_open', 'bizupkeep_child_render_portal_nav' );
+
+/**
+ * Client Portal access control and account linking.
+ *
+ * Requires login to view the "Client Portal" page or any of its
+ * child pages, and ensures the logged-in WordPress user has a linked
+ * BizHub Client record - creating one on first visit if it doesn't
+ * exist yet, via BizHub's ClientServiceInterface. That's the same
+ * service layer ClientDashboardController and the /profile REST
+ * endpoint already use, so no new client lifecycle logic is
+ * introduced here; this just calls what BizHub already exposes.
+ * Covers both existing WordPress users and anyone who registers
+ * later, since the check runs on every portal page load rather than
+ * only at registration time.
+ */
+add_action( 'template_redirect', 'bizupkeep_child_guard_client_portal' );
+
+/**
+ * Require login for Client Portal pages, and provision a BizHub
+ * Client record for the logged-in user if one doesn't exist yet.
+ */
+function bizupkeep_child_guard_client_portal(): void {
+	if ( ! bizupkeep_child_is_client_portal_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	bizupkeep_child_ensure_client_record( get_current_user_id() );
+}
+
+/**
+ * Determine whether the current request is for the "Client Portal"
+ * page or one of its child pages.
+ */
+function bizupkeep_child_is_client_portal_page(): bool {
+	if ( ! is_page() ) {
+		return false;
+	}
+
+	$portal = bizupkeep_child_find_page( 'client-portal', 0 );
+
+	if ( 0 === $portal ) {
+		return false;
+	}
+
+	$queried_id = get_queried_object_id();
+
+	return $queried_id === $portal || wp_get_post_parent_id( $queried_id ) === $portal;
+}
+
+/**
+ * Find or create the BizHub Client record linked to a WordPress
+ * user. Safe to call on every portal page load: the lookup is
+ * idempotent, and this does nothing if BizHub isn't active.
+ */
+function bizupkeep_child_ensure_client_record( int $wp_user_id ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$clients->getClientByWpUserId( $wp_user_id );
+
+		return;
+	} catch ( ClientNotFoundException $e ) {
+		// No client record yet for this user - create one below.
+	}
+
+	$wp_user = get_userdata( $wp_user_id );
+
+	if ( ! $wp_user ) {
+		return;
+	}
+
+	list( $first_name, $last_name ) = bizupkeep_child_split_user_name( $wp_user );
+
+	try {
+		$clients->createClient(
+			new ClientData(
+				wp_generate_uuid4(),
+				$wp_user_id,
+				new ProfileData( $first_name, $last_name, '', get_avatar_url( $wp_user_id ) )
+			)
+		);
+	} catch ( InvalidArgumentException $e ) {
+		// Another request created it first (race), or invalid data - either way, nothing more to do here.
+	}
+}
+
+/**
+ * Derive a non-empty first/last name pair from a WordPress user,
+ * falling back through first_name/last_name meta, display_name, and
+ * finally the username - BizHub's Profile entity requires both to be
+ * non-empty.
+ *
+ * @return array{0:string,1:string}
+ */
+function bizupkeep_child_split_user_name( WP_User $wp_user ): array {
+	$first_name = trim( (string) $wp_user->first_name );
+	$last_name  = trim( (string) $wp_user->last_name );
+
+	if ( '' !== $first_name && '' !== $last_name ) {
+		return array( $first_name, $last_name );
+	}
+
+	$parts = preg_split( '/\s+/', trim( (string) $wp_user->display_name ), 2 );
+
+	if ( '' !== ( $parts[0] ?? '' ) ) {
+		return array( $parts[0], $parts[1] ?? $wp_user->user_login );
+	}
+
+	return array( $wp_user->user_login, $wp_user->user_login );
+}
+
+/**
+ * Apply page (Company Registration application intake).
+ *
+ * The header and homepage template's "Start Application" buttons have
+ * always linked to /apply/, but no page existed there. This creates
+ * that page (idempotently, on theme activation) using the "BizUpKeep
+ * Apply" template, and wires its form to BizHub's Applications module:
+ * ApplicationServiceInterface::createApplication() (there is no REST
+ * route for creating applications today, only for listing/viewing/
+ * submitting an existing one - see Api/V1/ApplicationController.php -
+ * so this calls the service directly from the container, the same way
+ * bizupkeep_child_ensure_client_record() already does for Clients).
+ *
+ * Resolving "current user's numeric bizhub_clients.id" (required by
+ * ApplicationData::$clientId) needed a small additive fix to BizHub's
+ * Client entity/ClientRepository, since neither previously exposed it
+ * - see Client::getId() in the bizhub plugin.
+ */
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_apply_page' );
+
+/**
+ * Idempotently create the "Apply" page and assign it the apply
+ * template. Safe to run on every theme activation.
+ */
+function bizupkeep_child_setup_apply_page(): void {
+	$apply_id = bizupkeep_child_get_or_create_page( 'apply', __( 'Apply Now', 'bizupkeep-astra-child' ), '', 0 );
+
+	if ( 0 === $apply_id ) {
+		return;
+	}
+
+	update_post_meta( $apply_id, '_wp_page_template', 'page-templates/template-apply.php' );
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_apply_submission' );
+
+/**
+ * Handle the Apply form's POST submission. Runs on template_redirect
+ * (before the page template renders) so it can redirect on success or
+ * failure - the template itself only ever handles GET display.
+ *
+ * Dispatches to one of three handlers based on the posted
+ * "application_type" (New Registration / Company Amendment / Annual
+ * Return - see template-apply.php's radio buttons), each of which
+ * starts the matching bizupkeep-workflow workflow type directly via
+ * the shared container, the same pattern already used for Company
+ * Registration.
+ */
+function bizupkeep_child_handle_apply_submission(): void {
+	if ( ! isset( $_POST['bizupkeep_apply_nonce'] ) ) {
+		return;
+	}
+
+	if ( ! is_page() || bizupkeep_child_find_page( 'apply', 0 ) !== get_queried_object_id() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_apply', 'bizupkeep_apply_nonce' );
+
+	$wp_user_id        = get_current_user_id();
+	$application_type  = isset( $_POST['application_type'] ) ? sanitize_text_field( wp_unslash( $_POST['application_type'] ) ) : '';
+	$notes             = isset( $_POST['notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) ) : '';
+
+	bizupkeep_child_ensure_client_record( $wp_user_id );
+
+	$submitted = match ( $application_type ) {
+		'new_registration'  => bizupkeep_child_submit_new_registration( $wp_user_id, $notes ),
+		'company_amendment' => bizupkeep_child_submit_company_amendment( $wp_user_id, $notes ),
+		'annual_return'     => bizupkeep_child_submit_annual_return( $wp_user_id, $notes ),
+		default              => false,
+	};
+
+	if ( ! $submitted ) {
+		wp_safe_redirect( add_query_arg( 'apply_error', '1', get_permalink() ) );
+		exit;
+	}
+
+	wp_safe_redirect( add_query_arg( 'submitted', '1', get_permalink() ) );
+	exit;
+}
+
+/**
+ * Create and submit a New Company Registration application. Returns
+ * false (rather than throwing) on any failure, so the caller can show
+ * a generic "something went wrong" state - this runs from a public-
+ * facing form submission, not somewhere an uncaught exception should
+ * ever be allowed to surface as a fatal error page.
+ *
+ * Private Company (Pty) Ltd only - Close Corporations can no longer
+ * be registered, so companyType is hardcoded rather than taken from
+ * form input (there is no longer a form field for it at all).
+ */
+function bizupkeep_child_submit_new_registration( int $wp_user_id, string $notes ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$proposed_names = isset( $_POST['proposed_name'] ) && is_array( $_POST['proposed_name'] )
+		? bizupkeep_child_parse_proposed_names( $_POST['proposed_name'] )
+		: array();
+
+	if ( array() === $proposed_names ) {
+		return false;
+	}
+
+	$address = isset( $_POST['company_address'] ) && is_array( $_POST['company_address'] )
+		? bizupkeep_child_parse_address_input( $_POST['company_address'] )
+		: new AddressData( '', '', '', '', '', '' );
+
+	if ( '' === trim( $address->addressLine1 ) || '' === trim( $address->city ) || '' === trim( $address->postalCode ) ) {
+		return false;
+	}
+
+	$directors = isset( $_POST['director'] ) && is_array( $_POST['director'] )
+		? bizupkeep_child_parse_directors_input( $_POST['director'] )
+		: array();
+
+	if ( array() === $directors ) {
+		return false; // At least one director is required.
+	}
+
+	if ( count( $directors ) > 10 ) {
+		$directors = array_slice( $directors, 0, 10 );
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$client = $clients->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return false;
+	}
+
+	$client_id = $client->getId();
+
+	if ( null === $client_id ) {
+		return false;
+	}
+
+	try {
+		$company_uuid = wp_generate_uuid4();
+
+		// registrationNumber is required and unique at both the entity
+		// and DB level (bizhub_companies.registration_number is
+		// NOT NULL + UNIQUE) - but a real CIPC number doesn't exist
+		// until the company is actually registered, which is the whole
+		// point of the workflow this kicks off. CompanyStatus::CREATED
+		// plus a per-company-unique placeholder is the pattern the
+		// Companies module already supports for this (see
+		// CompanyService::updateCompany(), which swaps in the real
+		// number once CIPC issues one).
+		//
+		// The first proposed name becomes the working company_name
+		// (Company only ever has one), with all 4 preferences recorded
+		// in both the application comment and the workflow's own
+		// "proposed_names" metadata for staff review.
+		$companies = bizhub()->container()->get( CompanyServiceInterface::class );
+
+		$companies->createCompany(
+			new CompanyData(
+				$company_uuid,
+				$client_id,
+				'PENDING-' . $company_uuid,
+				$proposed_names[0],
+				__( 'Private Company (Pty) Ltd', 'bizupkeep-astra-child' ),
+				CompanyStatus::CREATED,
+				$address,
+				$directors
+			)
+		);
+
+		$applications = bizhub()->container()->get( ApplicationServiceInterface::class );
+
+		$message = sprintf(
+			/* translators: %s: semicolon-separated list of proposed company names, in order of preference. */
+			__( 'Proposed company names (in order of preference): %s', 'bizupkeep-astra-child' ),
+			implode( '; ', $proposed_names )
+		);
+
+		if ( '' !== $notes ) {
+			$message .= "\n\n" . $notes;
+		}
+
+		$application = $applications->createApplication(
+			new ApplicationData(
+				wp_generate_uuid4(),
+				$client_id,
+				'company_registration',
+				$company_uuid
+			)
+		);
+
+		$workflow = bizhub()->container()->get( ApplicationWorkflowService::class );
+		$workflow->addComment( $application->getUuid(), $wp_user_id, $message );
+		$workflow->submit( $application->getUuid() );
+
+		// Not wrapped in a shared DB transaction - the framework's
+		// DatabaseInterface doesn't expose one, and neither does any
+		// other module in this codebase. A failure here leaves the
+		// Company and Application rows in place without a
+		// WorkflowInstance, which is recoverable manually (the company
+		// still exists in CompanyStatus::CREATED) but not automatic.
+		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
+		$instance     = $registration->start( $company_uuid, $wp_user_id, array( 'proposed_names' => $proposed_names ) );
+
+		// Move Created -> PendingDocuments immediately: the moment an
+		// application is submitted, the client IS being asked for
+		// documents (that's what the My Documents page does next) - so
+		// there's no separate "someone decides to request documents"
+		// step to wait for here.
+		$registration->performAction(
+			$instance->getUuid(),
+			CompanyRegistrationDefinition::ACTION_REQUEST_DOCUMENTS,
+			$wp_user_id,
+			__( 'Documents requested automatically at application submission.', 'bizupkeep-astra-child' )
+		);
+	} catch ( \Throwable $e ) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Start a Company Amendment workflow (director, name, and/or address
+ * change, any combination) for one of the client's existing
+ * companies. Returns false on any failure, per the same
+ * public-form-submission convention as the other two submit handlers.
+ *
+ * Director/name/address changes are recorded as workflow metadata
+ * only (via CompanyAmendmentService::start()) - they are proposed
+ * changes pending staff review, not applied to the live Company/
+ * Director records immediately. Nothing in this codebase auto-applies
+ * an approved change yet (Company Registration's own "Approve" is
+ * likewise just a status transition today), so this doesn't invent
+ * that behaviour just for amendments.
+ */
+function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $notes ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$company_uuid = isset( $_POST['amendment_company_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['amendment_company_uuid'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+
+	if ( null === $company ) {
+		return false;
+	}
+
+	$allowed_types    = array(
+		CompanyAmendmentDefinition::AMENDMENT_TYPE_DIRECTOR,
+		CompanyAmendmentDefinition::AMENDMENT_TYPE_NAME,
+		CompanyAmendmentDefinition::AMENDMENT_TYPE_ADDRESS,
+	);
+	$posted_types     = isset( $_POST['amendment_types'] ) && is_array( $_POST['amendment_types'] )
+		? array_map( 'sanitize_text_field', wp_unslash( $_POST['amendment_types'] ) )
+		: array();
+	$amendment_types  = array_values( array_intersect( $posted_types, $allowed_types ) );
+
+	if ( array() === $amendment_types ) {
+		return false;
+	}
+
+	$proposed_names = array();
+
+	if ( in_array( CompanyAmendmentDefinition::AMENDMENT_TYPE_NAME, $amendment_types, true ) ) {
+		$proposed_names = isset( $_POST['amendment_proposed_name'] ) && is_array( $_POST['amendment_proposed_name'] )
+			? bizupkeep_child_parse_proposed_names( $_POST['amendment_proposed_name'] )
+			: array();
+
+		if ( array() === $proposed_names ) {
+			return false;
+		}
+	}
+
+	$new_address = array();
+
+	if ( in_array( CompanyAmendmentDefinition::AMENDMENT_TYPE_ADDRESS, $amendment_types, true ) ) {
+		$address_data = isset( $_POST['amendment_address'] ) && is_array( $_POST['amendment_address'] )
+			? bizupkeep_child_parse_address_input( $_POST['amendment_address'] )
+			: new AddressData( '', '', '', '', '', '' );
+
+		if ( '' === trim( $address_data->addressLine1 ) || '' === trim( $address_data->city ) || '' === trim( $address_data->postalCode ) ) {
+			return false;
+		}
+
+		$new_address = $address_data->toArray();
+	}
+
+	$director_changes = array();
+
+	if ( in_array( CompanyAmendmentDefinition::AMENDMENT_TYPE_DIRECTOR, $amendment_types, true ) ) {
+		$director_changes = bizupkeep_child_parse_director_changes( $company_uuid );
+
+		if ( array() === $director_changes ) {
+			return false;
+		}
+	}
+
+	try {
+		$amendments = bizhub()->container()->get( CompanyAmendmentService::class );
+		$instance   = $amendments->start( $company_uuid, $wp_user_id, $amendment_types, $proposed_names, $director_changes, $new_address );
+
+		// Same immediate-document-request pattern as Company
+		// Registration: submitting the application is itself the
+		// trigger to start collecting supporting documents.
+		$amendments->performAction(
+			$instance->getUuid(),
+			CompanyAmendmentDefinition::ACTION_REQUEST_DOCUMENTS,
+			$wp_user_id,
+			$notes
+		);
+	} catch ( \Throwable $e ) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Start an Annual Return workflow for one of the client's existing
+ * companies and a financial year. Returns false on any failure, per
+ * the same public-form-submission convention as the other two submit
+ * handlers.
+ */
+function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$company_uuid = isset( $_POST['return_company_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['return_company_uuid'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+
+	if ( null === $company ) {
+		return false;
+	}
+
+	$financial_year = isset( $_POST['financial_year'] ) ? absint( $_POST['financial_year'] ) : 0;
+
+	if ( $financial_year < 2000 || $financial_year > 2100 ) {
+		return false;
+	}
+
+	try {
+		$returns  = bizhub()->container()->get( AnnualReturnService::class );
+		$instance = $returns->start( $company_uuid, $wp_user_id, $financial_year );
+
+		// No PendingDocuments stage for Annual Return (see
+		// AnnualReturnDefinition) - Created moves straight to
+		// AwaitingPayment.
+		$returns->performAction(
+			$instance->getUuid(),
+			AnnualReturnDefinition::ACTION_REQUEST_PAYMENT,
+			$wp_user_id,
+			$notes
+		);
+	} catch ( \Throwable $e ) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Parse a posted address sub-array (e.g. $_POST['company_address'])
+ * into an AddressData DTO. Shared by New Registration's company
+ * address and Company Amendment's new address.
+ *
+ * @param array<string,mixed> $raw
+ */
+function bizupkeep_child_parse_address_input( array $raw ): AddressData {
+	$raw = wp_unslash( $raw );
+
+	return new AddressData(
+		sanitize_text_field( $raw['address_line_1'] ?? '' ),
+		sanitize_text_field( $raw['address_line_2'] ?? '' ),
+		sanitize_text_field( $raw['suburb'] ?? '' ),
+		sanitize_text_field( $raw['city'] ?? '' ),
+		sanitize_text_field( $raw['province'] ?? '' ),
+		sanitize_text_field( $raw['postal_code'] ?? '' )
+	);
+}
+
+/**
+ * Parse a posted list of proposed company names (e.g.
+ * $_POST['proposed_name'], a 4-entry indexed array from the repeated
+ * "1st choice".."4th choice" fields) into a clean, non-empty,
+ * in-order list. Shared by New Registration and Company Amendment's
+ * name-change section.
+ *
+ * @param array<int,mixed> $raw
+ * @return string[]
+ */
+function bizupkeep_child_parse_proposed_names( array $raw ): array {
+	$raw = wp_unslash( $raw );
+
+	return array_values(
+		array_filter(
+			array_map( 'sanitize_text_field', $raw ),
+			static function ( $name ) {
+				return '' !== trim( (string) $name );
+			}
+		)
+	);
+}
+
+/**
+ * Parse a posted director repeater (e.g. $_POST['director'], an
+ * indexed array of {first_name, last_name, id_number, ...} blocks
+ * from the "+ Add Director" repeater) into DirectorData DTOs. Blank
+ * rows (an "Add Director" block the client never filled in) and rows
+ * missing both an ID and passport number (required by the Director
+ * entity - see Director::validate()) are silently skipped rather than
+ * failing the whole submission over one empty repeater block.
+ *
+ * @param array<int,array<string,mixed>> $raw
+ * @return DirectorData[]
+ */
+function bizupkeep_child_parse_directors_input( array $raw ): array {
+	$raw       = wp_unslash( $raw );
+	$directors = array();
+
+	foreach ( $raw as $entry ) {
+		if ( ! is_array( $entry ) ) {
+			continue;
+		}
+
+		$first_name = sanitize_text_field( $entry['first_name'] ?? '' );
+		$last_name  = sanitize_text_field( $entry['last_name'] ?? '' );
+
+		if ( '' === $first_name || '' === $last_name ) {
+			continue;
+		}
+
+		$id_number       = sanitize_text_field( $entry['id_number'] ?? '' );
+		$passport_number = sanitize_text_field( $entry['passport_number'] ?? '' );
+
+		if ( '' === $id_number && '' === $passport_number ) {
+			continue;
+		}
+
+		$phone = sanitize_text_field( $entry['phone'] ?? '' );
+		$email = sanitize_email( $entry['email'] ?? '' );
+
+		$address = null;
+
+		if ( ! empty( $entry['address'] ) && is_array( $entry['address'] ) && '' !== trim( (string) ( $entry['address']['address_line_1'] ?? '' ) ) ) {
+			$address = new AddressData(
+				sanitize_text_field( $entry['address']['address_line_1'] ?? '' ),
+				sanitize_text_field( $entry['address']['address_line_2'] ?? '' ),
+				sanitize_text_field( $entry['address']['suburb'] ?? '' ),
+				sanitize_text_field( $entry['address']['city'] ?? '' ),
+				sanitize_text_field( $entry['address']['province'] ?? '' ),
+				sanitize_text_field( $entry['address']['postal_code'] ?? '' )
+			);
+		}
+
+		$directors[] = new DirectorData(
+			wp_generate_uuid4(),
+			$first_name,
+			$last_name,
+			'' !== $id_number ? $id_number : null,
+			'' !== $passport_number ? $passport_number : null,
+			new \DateTimeImmutable(),
+			null,
+			true,
+			'' !== $phone ? $phone : null,
+			'' !== $email ? $email : null,
+			$address
+		);
+	}
+
+	return $directors;
+}
+
+/**
+ * Build a Company Amendment's "director_changes" metadata array: a
+ * "remove" entry for each posted director UUID that actually belongs
+ * to this company (re-verified here, not trusted from the form - a
+ * posted UUID for someone else's director is silently dropped, the
+ * same ownership pattern used throughout this file), plus an "add"
+ * entry for each filled-in row of the "Add new director(s)" repeater.
+ *
+ * @return array<int,array<string,mixed>>
+ */
+function bizupkeep_child_parse_director_changes( string $company_uuid ): array {
+	$changes = array();
+
+	$remove_uuids = isset( $_POST['director_remove'] ) && is_array( $_POST['director_remove'] )
+		? array_map( 'sanitize_text_field', wp_unslash( $_POST['director_remove'] ) )
+		: array();
+
+	if ( array() !== $remove_uuids ) {
+		$directors = bizhub()->container()->get( DirectorRepositoryInterface::class );
+
+		foreach ( $remove_uuids as $uuid ) {
+			$director = $directors->findByUuid( $uuid );
+
+			if ( null !== $director && $director->getCompanyUuid() === $company_uuid ) {
+				$changes[] = array(
+					'action' => 'remove',
+					'uuid'   => $uuid,
+					'name'   => $director->getFullName(),
+				);
+			}
+		}
+	}
+
+	if ( isset( $_POST['amendment_director'] ) && is_array( $_POST['amendment_director'] ) ) {
+		foreach ( bizupkeep_child_parse_directors_input( $_POST['amendment_director'] ) as $director_data ) {
+			$changes[] = array(
+				'action'          => 'add',
+				'first_name'      => $director_data->firstName,
+				'last_name'       => $director_data->lastName,
+				'id_number'       => $director_data->idNumber,
+				'passport_number' => $director_data->passportNumber,
+				'phone'           => $director_data->phone,
+				'email'           => $director_data->email,
+			);
+		}
+	}
+
+	return $changes;
+}
+
+/**
+ * Build the data the Apply form needs for the Company Amendment and
+ * Annual Return sections: every company belonging to the logged-in
+ * client, with its current directors (for the "tick to remove a
+ * director" list).
+ *
+ * @return array<int,array{uuid:string,name:string,directors:array<int,array{uuid:string,full_name:string}>}>
+ */
+function bizupkeep_child_client_companies_for_form( int $wp_user_id ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$client = $clients->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return array();
+	}
+
+	$client_id = $client->getId();
+
+	if ( null === $client_id ) {
+		return array();
+	}
+
+	$companies = bizhub()->container()->get( CompanyServiceInterface::class );
+	$directors = bizhub()->container()->get( DirectorRepositoryInterface::class );
+
+	$result = array();
+
+	foreach ( $companies->getCompaniesForClient( $client_id ) as $company ) {
+		$company_directors = array_map(
+			static function ( $director ) {
+				return array(
+					'uuid'      => $director->getUuid(),
+					'full_name' => $director->getFullName(),
+				);
+			},
+			$directors->findByCompanyUuid( $company->getUuid() )
+		);
+
+		$result[] = array(
+			'uuid'      => $company->getUuid(),
+			'name'      => $company->getCompanyName(),
+			'directors' => $company_directors,
+		);
+	}
+
+	return $result;
+}
+
+/**
+ * Render one address field group (address line 1/2, suburb, city,
+ * province, postal code) with the given field-name prefix, e.g.
+ * bizupkeep_child_render_address_fields( 'company_address' ) renders
+ * inputs named company_address[address_line_1] etc. Shared by the
+ * company-level address section and each director block's own
+ * address sub-group.
+ */
+function bizupkeep_child_render_address_fields( string $prefix ): void {
+	?>
+	<p>
+		<label><?php esc_html_e( 'Address Line 1', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[address_line_1]">
+	</p>
+	<p>
+		<label><?php esc_html_e( 'Address Line 2 (optional)', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[address_line_2]">
+	</p>
+	<p>
+		<label><?php esc_html_e( 'Suburb', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[suburb]">
+	</p>
+	<p>
+		<label><?php esc_html_e( 'City', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[city]">
+	</p>
+	<p>
+		<label><?php esc_html_e( 'Province', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[province]">
+	</p>
+	<p>
+		<label><?php esc_html_e( 'Postal Code', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" name="<?php echo esc_attr( $prefix ); ?>[postal_code]">
+	</p>
+	<?php
+}
+
+/**
+ * Render one director repeater block: name/ID/contact/address fields
+ * under "{$prefix}[{$index}][...]", plus a Remove button. $index is a
+ * plain int for server-rendered blocks (the one visible on page load)
+ * or the literal string "__INDEX__" when rendering the <template> the
+ * "+ Add Director" JS clones - see assets/js/custom.js, which replaces
+ * "__INDEX__" with the next real index before inserting the clone.
+ *
+ * @param int|string $index
+ */
+function bizupkeep_child_render_director_fields( string $prefix, $index ): void {
+	$base = sprintf( '%s[%s]', $prefix, $index );
+	?>
+	<div class="bizupkeep-director-block">
+		<p>
+			<label><?php esc_html_e( 'First Name', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[first_name]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Last Name', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[last_name]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'SA ID Number', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[id_number]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Passport Number (if not an SA citizen)', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[passport_number]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Phone', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[phone]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Email', 'bizupkeep-astra-child' ); ?></label>
+			<input type="email" name="<?php echo esc_attr( $base ); ?>[email]">
+		</p>
+		<?php bizupkeep_child_render_address_fields( $base . '[address]' ); ?>
+		<button type="button" class="bizupkeep-btn bizupkeep-repeater-remove"><?php esc_html_e( 'Remove', 'bizupkeep-astra-child' ); ?></button>
+	</div>
+	<?php
+}
+
+/**
+ * Document collection (Company Registration workflow's PendingDocuments
+ * step).
+ *
+ * BizHub's Documents module has no upload route anywhere (REST only
+ * exposes view/delete - see Documents/Controllers/DocumentController.php's
+ * own docblock, which says file-upload handling is left to the caller)
+ * and BizHub's Storage module is an unbuilt stub - the real file storage
+ * lives in Documents\Services\DocumentStorageService, called via
+ * DocumentService::uploadDocument(). This is the first place in the
+ * codebase that actually handles a raw $_FILES upload into it.
+ *
+ * "Verifying" documents is purely a boolean the caller passes to
+ * CompanyRegistrationService::performAction() - the workflow engine
+ * has no awareness of real Document rows (see
+ * CompanyRegistrationGuard::guard(), which only checks
+ * $context['documents_verified'] === true). This wires the two
+ * together: once both required categories (ID document, proof of
+ * address) are uploaded for a company, the workflow is advanced
+ * automatically.
+ */
+
+const BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES = array(
+	DocumentCategory::ID_DOCUMENT,
+	DocumentCategory::PROOF_OF_ADDRESS,
+);
+
+const BIZUPKEEP_MAX_DOCUMENT_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB.
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_document_upload' );
+
+/**
+ * Handle the My Documents page's upload form POST. Runs on
+ * template_redirect (before the page template renders) so it can
+ * redirect on success or failure.
+ */
+function bizupkeep_child_handle_document_upload(): void {
+	if ( ! isset( $_POST['bizupkeep_upload_nonce'] ) ) {
+		return;
+	}
+
+	if ( ! is_page() || bizupkeep_child_find_page( 'client-portal-documents', bizupkeep_child_find_page( 'client-portal', 0 ) ) !== get_queried_object_id() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_upload_document', 'bizupkeep_upload_nonce' );
+
+	$wp_user_id   = get_current_user_id();
+	$company_uuid = isset( $_POST['company_uuid'] ) ? sanitize_text_field( wp_unslash( $_POST['company_uuid'] ) ) : '';
+	$category_raw = isset( $_POST['category'] ) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : '';
+
+	$result = bizupkeep_child_process_document_upload( $wp_user_id, $company_uuid, $category_raw );
+
+	wp_safe_redirect( add_query_arg( $result ? 'uploaded' : 'upload_error', '1', get_permalink() ) );
+	exit;
+}
+
+/**
+ * Validate and store an uploaded document, then advance the workflow
+ * if that completes the required set. Returns false (rather than
+ * throwing) on any failure - ownership checks, file validation, and
+ * BizHub service calls are all treated as "show a generic error", not
+ * something that should ever surface as a fatal error page from a
+ * public-facing form submission.
+ */
+function bizupkeep_child_process_document_upload( int $wp_user_id, string $company_uuid, string $category_raw ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	// Only these two categories are collected on this form - reject
+	// anything else rather than trusting the posted value blindly.
+	$allowed_categories = array(
+		'id_document' => DocumentCategory::ID_DOCUMENT,
+		'proof_of_address' => DocumentCategory::PROOF_OF_ADDRESS,
+	);
+
+	if ( ! isset( $allowed_categories[ $category_raw ] ) ) {
+		return false;
+	}
+
+	$category = $allowed_categories[ $category_raw ];
+
+	$company = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+
+	if ( null === $company ) {
+		return false;
+	}
+
+	// Only accept uploads while the workflow is actually waiting on
+	// documents - not before (company just created, nothing requested
+	// yet) and not after (already verified/moved on).
+	if ( WorkflowStatus::PendingDocuments !== bizupkeep_child_company_workflow_status( $company_uuid ) ) {
+		return false;
+	}
+
+	$file = bizupkeep_child_validate_uploaded_file( 'document' );
+
+	if ( null === $file ) {
+		return false;
+	}
+
+	try {
+		$documents = bizhub()->container()->get( DocumentService::class );
+
+		$documents->uploadDocument(
+			'company',
+			$company_uuid,
+			$file['name'],
+			$category,
+			$file['tmp_name'],
+			$file['name'],
+			$wp_user_id
+		);
+	} catch ( \Throwable $e ) {
+		return false;
+	}
+
+	bizupkeep_child_maybe_verify_documents( $company_uuid, $wp_user_id );
+
+	return true;
+}
+
+/**
+ * Read, validate, and return the uploaded file's PHP $_FILES entry, or
+ * null if it's missing, failed, too large, or not an allowed type.
+ * Deliberately checks is_uploaded_file() as a defense against a
+ * crafted tmp_name path, even though PHP's own upload handling makes
+ * that hard to spoof - DocumentStorageService::store() uses copy()
+ * rather than move_uploaded_file(), which is what would normally
+ * enforce this.
+ *
+ * @return array{name:string,tmp_name:string}|null
+ */
+function bizupkeep_child_validate_uploaded_file( string $field ): ?array {
+	if ( empty( $_FILES[ $field ] ) || ! is_array( $_FILES[ $field ] ) ) {
+		return null;
+	}
+
+	$file = $_FILES[ $field ];
+
+	if ( ! isset( $file['error'], $file['tmp_name'], $file['name'], $file['size'] ) ) {
+		return null;
+	}
+
+	if ( UPLOAD_ERR_OK !== $file['error'] ) {
+		return null;
+	}
+
+	if ( ! is_uploaded_file( $file['tmp_name'] ) ) {
+		return null;
+	}
+
+	if ( $file['size'] <= 0 || $file['size'] > BIZUPKEEP_MAX_DOCUMENT_UPLOAD_BYTES ) {
+		return null;
+	}
+
+	$extension = strtolower( (string) pathinfo( (string) $file['name'], PATHINFO_EXTENSION ) );
+
+	$allowed_extensions_to_mime = array(
+		'pdf'  => 'application/pdf',
+		'jpg'  => 'image/jpeg',
+		'jpeg' => 'image/jpeg',
+		'png'  => 'image/png',
+	);
+
+	if ( ! isset( $allowed_extensions_to_mime[ $extension ] ) ) {
+		return null;
+	}
+
+	// Don't trust the client-supplied $file['type'] header - detect
+	// the real MIME type from the file's actual bytes, same as
+	// DocumentStorageService::store() does after storing it, just
+	// checked here before accepting the upload at all.
+	$detected_mime = function_exists( 'mime_content_type' ) ? mime_content_type( $file['tmp_name'] ) : false;
+
+	if ( false === $detected_mime || $detected_mime !== $allowed_extensions_to_mime[ $extension ] ) {
+		return null;
+	}
+
+	return array(
+		'name'     => sanitize_file_name( (string) $file['name'] ),
+		'tmp_name' => (string) $file['tmp_name'],
+	);
+}
+
+/**
+ * Look up a company by UUID and confirm it belongs to the given
+ * WordPress user's client record. Returns null if the client doesn't
+ * exist, the company doesn't exist, or the company belongs to someone
+ * else - the caller should treat all three identically (generic
+ * failure), never revealing which case it was.
+ */
+function bizupkeep_child_get_owned_company( int $wp_user_id, string $company_uuid ): ?Company {
+	if ( '' === $company_uuid ) {
+		return null;
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$client = $clients->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return null;
+	}
+
+	$client_id = $client->getId();
+
+	if ( null === $client_id ) {
+		return null;
+	}
+
+	$companies = bizhub()->container()->get( CompanyServiceInterface::class );
+
+	try {
+		$company = $companies->getCompany( $company_uuid );
+	} catch ( \Throwable $e ) {
+		return null;
+	}
+
+	return $company->getClientId() === $client_id ? $company : null;
+}
+
+/**
+ * Find a company's current Company Registration workflow instance, or
+ * null if it has none at all. Goes directly to
+ * WorkflowRepositoryInterface rather than CompanyRegistrationService,
+ * since the Service (and WorkflowEngineInterface underneath it) only
+ * expose find-by-workflow-uuid, not find-by-subject - the repository
+ * is the only layer with findForSubject(). A company created by this
+ * theme always has exactly one workflow instance, but takes the most
+ * recently created if more than one is ever found.
+ */
+function bizupkeep_child_find_company_workflow_instance( string $company_uuid ) {
+	$workflows = bizhub()->container()->get( WorkflowRepositoryInterface::class );
+
+	$instances = $workflows->findForSubject( 'company', $company_uuid );
+
+	if ( array() === $instances ) {
+		return null;
+	}
+
+	usort(
+		$instances,
+		static function ( $a, $b ) {
+			return $b->getCreatedAt() <=> $a->getCreatedAt();
+		}
+	);
+
+	return $instances[0];
+}
+
+/**
+ * Get a company's current Company Registration workflow status, or
+ * null if it has no workflow instance at all.
+ */
+function bizupkeep_child_company_workflow_status( string $company_uuid ): ?WorkflowStatus {
+	$instance = bizupkeep_child_find_company_workflow_instance( $company_uuid );
+
+	return $instance?->getStatus();
+}
+
+/**
+ * If a company now has both required document categories uploaded,
+ * advance its workflow from PendingDocuments to DocumentsVerified.
+ * Safe to call after every upload - re-checks the current status
+ * first, so it's a no-op once already verified (or if the required
+ * set still isn't complete).
+ */
+function bizupkeep_child_maybe_verify_documents( string $company_uuid, int $wp_user_id ): void {
+	if ( WorkflowStatus::PendingDocuments !== bizupkeep_child_company_workflow_status( $company_uuid ) ) {
+		return;
+	}
+
+	$documents = bizhub()->container()->get( DocumentService::class );
+	$uploaded  = $documents->getDocumentsForOwner( 'company', $company_uuid );
+
+	$categories = array_map(
+		static function ( $document ) {
+			return $document->getCategory();
+		},
+		$uploaded
+	);
+
+	foreach ( BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES as $required ) {
+		if ( ! in_array( $required, $categories, true ) ) {
+			return;
+		}
+	}
+
+	$instance = bizupkeep_child_find_company_workflow_instance( $company_uuid );
+
+	if ( null === $instance ) {
+		return;
+	}
+
+	try {
+		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
+		$registration->performAction(
+			$instance->getUuid(),
+			CompanyRegistrationDefinition::ACTION_VERIFY_DOCUMENTS,
+			$wp_user_id,
+			__( 'Required documents uploaded by client.', 'bizupkeep-astra-child' ),
+			array( 'documents_verified' => true )
+		);
+
+		// ACTION_REQUEST_PAYMENT has no guard (see
+		// CompanyRegistrationGuard::guard(), which only has explicit
+		// cases for verify_documents/confirm_payment/approve) - it's a
+		// free transition once DocumentsVerified, so there's no reason
+		// to wait for a separate trigger before asking the client to
+		// pay.
+		$registration->performAction(
+			$instance->getUuid(),
+			CompanyRegistrationDefinition::ACTION_REQUEST_PAYMENT,
+			$wp_user_id,
+			__( 'Payment requested automatically after document verification.', 'bizupkeep-astra-child' )
+		);
+	} catch ( \Throwable $e ) {
+		// Leave the workflow wherever it got to - the client can still
+		// see their uploaded documents either way, and this can be
+		// resolved manually or retried on the next upload.
+	}
+}
+
+/**
+ * Build the data the My Documents template needs: one section per
+ * company belonging to the logged-in user's client record, each with
+ * its current workflow status, already-uploaded documents, and
+ * whether uploads are currently accepted (only while PendingDocuments).
+ *
+ * @return array<int,array{company_uuid:string,company_name:string,status_label:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>}>
+ */
+function bizupkeep_child_documents_sections( int $wp_user_id ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$client = $clients->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return array();
+	}
+
+	$client_id = $client->getId();
+
+	if ( null === $client_id ) {
+		return array();
+	}
+
+	$companies = bizhub()->container()->get( CompanyServiceInterface::class );
+	$documents = bizhub()->container()->get( DocumentService::class );
+
+	$sections = array();
+
+	foreach ( $companies->getCompaniesForClient( $client_id ) as $company ) {
+		$status = bizupkeep_child_company_workflow_status( $company->getUuid() );
+
+		$uploaded = array_map(
+			static function ( $document ) {
+				$version = $document->getCurrentVersion();
+
+				return array(
+					'category_label' => $document->getCategory()->label(),
+					'name'            => $document->getName(),
+					'uploaded_at'     => $version ? $version->uploadedAt->format( 'j M Y' ) : '',
+				);
+			},
+			$documents->getDocumentsForOwner( 'company', $company->getUuid() )
+		);
+
+		$sections[] = array(
+			'company_uuid' => $company->getUuid(),
+			'company_name' => $company->getCompanyName(),
+			'status_label' => null === $status ? __( 'Not started', 'bizupkeep-astra-child' ) : bizupkeep_child_workflow_status_label( $status ),
+			'can_upload'   => WorkflowStatus::PendingDocuments === $status,
+			'documents'    => $uploaded,
+		);
+	}
+
+	return $sections;
+}
+
+/**
+ * Human-readable label for a WorkflowStatus - mirrors
+ * CompanyRegistrationDefinition's status names since the enum itself
+ * has no label() method (unlike DocumentCategory/ApplicationStatus,
+ * which do).
+ */
+function bizupkeep_child_workflow_status_label( WorkflowStatus $status ): string {
+	return match ( $status ) {
+		WorkflowStatus::Created => __( 'Created', 'bizupkeep-astra-child' ),
+		WorkflowStatus::PendingDocuments => __( 'Awaiting Your Documents', 'bizupkeep-astra-child' ),
+		WorkflowStatus::DocumentsVerified => __( 'Documents Verified', 'bizupkeep-astra-child' ),
+		WorkflowStatus::AwaitingPayment => __( 'Awaiting Payment', 'bizupkeep-astra-child' ),
+		WorkflowStatus::Processing => __( 'Processing', 'bizupkeep-astra-child' ),
+		WorkflowStatus::QualityReview => __( 'In Review', 'bizupkeep-astra-child' ),
+		WorkflowStatus::Completed => __( 'Completed', 'bizupkeep-astra-child' ),
+		WorkflowStatus::Archived => __( 'Archived', 'bizupkeep-astra-child' ),
+		WorkflowStatus::Cancelled => __( 'Cancelled', 'bizupkeep-astra-child' ),
+		WorkflowStatus::Rejected => __( 'Rejected', 'bizupkeep-astra-child' ),
+	};
+}
+
+/**
+ * Payment (Company Registration workflow's AwaitingPayment step),
+ * via WooCommerce.
+ *
+ * BizHub already has a WooCommerce integration
+ * (includes/Integrations/WooCommerce/: ApplicationCreator,
+ * OrderListener, ProductMapper, CustomerSynchronizer), but it's a
+ * separate, unrelated system: it creates a brand-new Application for
+ * any order containing a product mapped via the `_bizhub_application_type`
+ * product meta key, with no link to an existing Company or workflow at
+ * all (company_uuid is always null on the applications it creates).
+ * Reusing it here would mean fighting its shape rather than building
+ * on it, so this is new, separate wiring - it never touches
+ * ApplicationCreator/OrderListener/ProductMapper, and doesn't create
+ * any bizhub_applications rows itself.
+ *
+ * The core problem this solves: nothing ties a WooCommerce order to a
+ * *specific* in-progress company registration. The flow:
+ *   1. "Pay Now" on My Applications links to the
+ *      "company-registration-packages" product category archive with
+ *      ?bizupkeep_pay_for={company_uuid} appended.
+ *   2. On that (or any) page load, bizupkeep_child_capture_payment_intent()
+ *      verifies the company belongs to the logged-in client and is
+ *      actually AwaitingPayment, then stores the UUID in the
+ *      WooCommerce session - not order meta yet, since no order exists.
+ *   3. Whichever package the client actually buys,
+ *      bizupkeep_child_attach_company_to_order() copies the session
+ *      value onto the new order as post meta at checkout, re-verifying
+ *      ownership again (a session value could otherwise be replayed
+ *      across tabs/accounts).
+ *   4. When that order's status changes to processing/completed,
+ *      bizupkeep_child_handle_order_payment() reads the company UUID
+ *      back off the order and confirms payment on its workflow, using
+ *      the order ID as CompanyRegistrationGuard's required
+ *      context['payment_reference'].
+ */
+
+const BIZUPKEEP_PAYMENT_SESSION_KEY = 'bizupkeep_company_uuid';
+const BIZUPKEEP_PACKAGES_CATEGORY_SLUG = 'company-registration-packages';
+
+if ( class_exists( 'WooCommerce' ) ) {
+	add_action( 'template_redirect', 'bizupkeep_child_capture_payment_intent' );
+	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_company_to_order', 10, 2 );
+	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_order_payment', 10, 4 );
+}
+
+/**
+ * Build the "Pay Now" URL for a company: the packages category
+ * archive (matching the same category the homepage's
+ * [bizupkeep_packages] shortcode already uses), with the company UUID
+ * attached as a query arg for bizupkeep_child_capture_payment_intent()
+ * to pick up. Falls back to the general shop page if that category
+ * doesn't exist, rather than linking somewhere broken.
+ */
+function bizupkeep_child_payment_url( string $company_uuid ): string {
+	$term = get_term_by( 'slug', BIZUPKEEP_PACKAGES_CATEGORY_SLUG, 'product_cat' );
+	$base = $term instanceof WP_Term ? get_term_link( $term ) : wc_get_page_permalink( 'shop' );
+
+	if ( is_wp_error( $base ) || false === $base ) {
+		$base = home_url( '/' );
+	}
+
+	return add_query_arg( 'bizupkeep_pay_for', $company_uuid, $base );
+}
+
+/**
+ * If the current request carries ?bizupkeep_pay_for={company_uuid},
+ * verify it belongs to the logged-in client and is actually
+ * AwaitingPayment, then remember it in the WooCommerce session for
+ * whichever order results from checkout. Runs on every page load
+ * (not just a dedicated page) since the client lands directly on a
+ * product/category page, not a theme-owned one.
+ */
+function bizupkeep_child_capture_payment_intent(): void {
+	if ( ! isset( $_GET['bizupkeep_pay_for'] ) || ! is_user_logged_in() ) {
+		return;
+	}
+
+	if ( null === WC()->session ) {
+		return;
+	}
+
+	$company_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_pay_for'] ) );
+	$company      = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+
+	if ( null === $company ) {
+		return;
+	}
+
+	if ( WorkflowStatus::AwaitingPayment !== bizupkeep_child_company_workflow_status( $company_uuid ) ) {
+		return;
+	}
+
+	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $company_uuid );
+}
+
+/**
+ * At checkout, copy the pending company UUID from the WooCommerce
+ * session onto the new order as post meta, so it survives past the
+ * session into something permanently queryable against the order.
+ * Re-verifies ownership again here rather than trusting the session
+ * value blindly - it could otherwise be replayed by switching
+ * accounts in another tab before completing checkout.
+ */
+function bizupkeep_child_attach_company_to_order( WC_Order $order, array $data ): void {
+	if ( null === WC()->session ) {
+		return;
+	}
+
+	$company_uuid = WC()->session->get( BIZUPKEEP_PAYMENT_SESSION_KEY );
+
+	if ( ! is_string( $company_uuid ) || '' === $company_uuid ) {
+		return;
+	}
+
+	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, null );
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id || null === bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid ) ) {
+		return;
+	}
+
+	$order->update_meta_data( '_bizupkeep_company_uuid', $company_uuid );
+}
+
+/**
+ * When an order's status changes to processing or completed, confirm
+ * payment on the company registration workflow it was attached to (if
+ * any) - moving AwaitingPayment to Processing. Guarded so this only
+ * ever fires once per order (mirrors the idempotency pattern
+ * Integrations/WooCommerce/OrderListener.php already uses for its own,
+ * unrelated purpose) and only while the workflow is genuinely still
+ * waiting on payment.
+ */
+function bizupkeep_child_handle_order_payment( int $order_id, string $old_status, string $new_status, WC_Order $order ): void {
+	if ( ! in_array( $new_status, array( 'processing', 'completed' ), true ) ) {
+		return;
+	}
+
+	if ( '1' === $order->get_meta( '_bizupkeep_payment_confirmed' ) ) {
+		return;
+	}
+
+	$company_uuid = $order->get_meta( '_bizupkeep_company_uuid' );
+
+	if ( ! is_string( $company_uuid ) || '' === $company_uuid ) {
+		return;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$instance = bizupkeep_child_find_company_workflow_instance( $company_uuid );
+
+	if ( null === $instance || WorkflowStatus::AwaitingPayment !== $instance->getStatus() ) {
+		return;
+	}
+
+	try {
+		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
+		$registration->performAction(
+			$instance->getUuid(),
+			CompanyRegistrationDefinition::ACTION_CONFIRM_PAYMENT,
+			(int) $order->get_customer_id(),
+			sprintf(
+				/* translators: %d: WooCommerce order ID. */
+				__( 'Payment confirmed via order #%d.', 'bizupkeep-astra-child' ),
+				$order_id
+			),
+			array( 'payment_reference' => (string) $order_id )
+		);
+
+		$order->update_meta_data( '_bizupkeep_payment_confirmed', '1' );
+		$order->save();
+	} catch ( \Throwable $e ) {
+		// Leave the workflow at AwaitingPayment - resolvable manually,
+		// or automatically on the order's next status change.
+	}
+}
+
+/**
+ * Build the data the My Applications template needs: one section per
+ * company belonging to the logged-in user's client record, with its
+ * current workflow status and (only while AwaitingPayment) a "Pay Now"
+ * link.
+ *
+ * @return array<int,array{company_name:string,status_label:string,pay_url:?string}>
+ */
+function bizupkeep_child_applications_sections( int $wp_user_id ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	$clients = bizhub()->container()->get( ClientServiceInterface::class );
+
+	try {
+		$client = $clients->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return array();
+	}
+
+	$client_id = $client->getId();
+
+	if ( null === $client_id ) {
+		return array();
+	}
+
+	$companies = bizhub()->container()->get( CompanyServiceInterface::class );
+
+	$sections = array();
+
+	foreach ( $companies->getCompaniesForClient( $client_id ) as $company ) {
+		$status = bizupkeep_child_company_workflow_status( $company->getUuid() );
+
+		$sections[] = array(
+			'company_name' => $company->getCompanyName(),
+			'status_label' => null === $status ? __( 'Not started', 'bizupkeep-astra-child' ) : bizupkeep_child_workflow_status_label( $status ),
+			'pay_url'       => WorkflowStatus::AwaitingPayment === $status
+				? ( class_exists( 'WooCommerce' ) ? bizupkeep_child_payment_url( $company->getUuid() ) : null )
+				: null,
+		);
+	}
+
+	return $sections;
+}
