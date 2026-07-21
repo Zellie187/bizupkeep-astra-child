@@ -53,6 +53,17 @@ $sections = bizupkeep_child_documents_sections( get_current_user_id() );
 					<h2><?php echo esc_html( $section['company_name'] ); ?></h2>
 					<span class="bizupkeep-status-pill"><?php echo esc_html( $section['status_label'] ); ?></span>
 
+					<?php if ( null !== $section['poa_url'] ) : ?>
+						<p>
+							<a href="<?php echo esc_url( $section['poa_url'] ); ?>" target="_blank" rel="noopener" class="bizupkeep-btn bizupkeep-btn-secondary">
+								<?php esc_html_e( 'Download / Print Your Power of Attorney', 'bizupkeep-astra-child' ); ?>
+							</a>
+						</p>
+						<p class="bizupkeep-field-hint">
+							<?php esc_html_e( 'Print it, get it signed by every director, then upload the signed copy below as "Signed Power of Attorney".', 'bizupkeep-astra-child' ); ?>
+						</p>
+					<?php endif; ?>
+
 					<?php if ( array() !== $section['documents'] ) : ?>
 						<table class="bizupkeep-documents-table">
 							<tbody>
@@ -78,7 +89,7 @@ $sections = bizupkeep_child_documents_sections( get_current_user_id() );
 							<select id="bizupkeep-category-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="category" required>
 								<option value=""><?php esc_html_e( 'Select an option', 'bizupkeep-astra-child' ); ?></option>
 								<option value="id_document"><?php esc_html_e( 'ID Document', 'bizupkeep-astra-child' ); ?></option>
-								<option value="proof_of_address"><?php esc_html_e( 'Proof of Address', 'bizupkeep-astra-child' ); ?></option>
+								<option value="signed_poa"><?php esc_html_e( 'Signed Power of Attorney', 'bizupkeep-astra-child' ); ?></option>
 							</select>
 
 							<label for="bizupkeep-file-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">

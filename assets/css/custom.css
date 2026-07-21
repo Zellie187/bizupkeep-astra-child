@@ -87,6 +87,18 @@
 	transform: translateY(-1px);
 }
 
+.bizupkeep-btn-secondary {
+	background: transparent;
+	color: var(--bizupkeep-primary);
+	border: 2px solid var(--bizupkeep-primary);
+}
+
+.bizupkeep-btn-secondary:hover {
+	background: var(--bizupkeep-primary);
+	color: #ffffff;
+	transform: translateY(-1px);
+}
+
 .bizupkeep-btn-large {
 	padding: 14px 32px;
 	font-size: 18px;

@@ -36,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.12.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.13.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -1440,14 +1440,21 @@ function bizupkeep_child_render_director_fields( string $prefix, $index ): void 
  * has no awareness of real Document rows (see
  * CompanyRegistrationGuard::guard(), which only checks
  * $context['documents_verified'] === true). This wires the two
- * together: once both required categories (ID document, proof of
- * address) are uploaded for a company, the workflow is advanced
+ * together: once both required categories (ID document, signed Power
+ * of Attorney) are uploaded for a company, the workflow is advanced
  * automatically.
+ *
+ * Signed POA replaced Proof of Address as the second required
+ * category in theme 1.13.0, matching the workflow spec's actual
+ * document requirement ("ID certified not older than 3 months, POA
+ * signed by all directors") - the generated POA itself is what the
+ * client is expected to print, get signed, and upload back here. See
+ * bizupkeep_child_render_poa_document().
  */
 
 const BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES = array(
 	DocumentCategory::ID_DOCUMENT,
-	DocumentCategory::PROOF_OF_ADDRESS,
+	DocumentCategory::SIGNED_POA,
 );
 
 const BIZUPKEEP_MAX_DOCUMENT_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB.
@@ -1511,7 +1518,7 @@ function bizupkeep_child_process_document_upload( int $wp_user_id, string $workf
 	// anything else rather than trusting the posted value blindly.
 	$allowed_categories = array(
 		'id_document' => DocumentCategory::ID_DOCUMENT,
-		'proof_of_address' => DocumentCategory::PROOF_OF_ADDRESS,
+		'signed_poa' => DocumentCategory::SIGNED_POA,
 	);
 
 	if ( ! isset( $allowed_categories[ $category_raw ] ) ) {
@@ -1861,7 +1868,7 @@ function bizupkeep_child_client_workflow_instances( int $wp_user_id ): array {
  * (see AnnualReturnDefinition), so there's nothing for this page to
  * show for one.
  *
- * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>}>
+ * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>,poa_url:?string}>
  */
 function bizupkeep_child_documents_sections( int $wp_user_id ): array {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
@@ -1891,6 +1898,12 @@ function bizupkeep_child_documents_sections( int $wp_user_id ): array {
 			$documents->getDocumentsForOwner( 'company', $row['company']->getUuid() )
 		);
 
+		$needs_poa = in_array(
+			$instance->getWorkflowType(),
+			array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ),
+			true
+		);
+
 		$sections[] = array(
 			'workflow_uuid'        => $instance->getUuid(),
 			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
@@ -1898,10 +1911,213 @@ function bizupkeep_child_documents_sections( int $wp_user_id ): array {
 			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus() ),
 			'can_upload'           => WorkflowStatus::PendingDocuments === $instance->getStatus(),
 			'documents'            => $uploaded,
+			'poa_url'              => $needs_poa ? bizupkeep_child_poa_url( $instance->getUuid() ) : null,
 		);
 	}
 
 	return $sections;
+}
+
+/**
+ * The name and CIPC customer code of the person clients grant power of
+ * attorney to - A2Z Business Administrators' registered practitioner.
+ * Kept as named constants rather than buried in the POA markup itself,
+ * since these are real identifying details that could conceivably
+ * change (a new practitioner, a new customer code) without anything
+ * else about the POA needing to.
+ */
+const BIZUPKEEP_POA_ATTORNEY_NAME = 'ANZELLE KIDSON';
+const BIZUPKEEP_POA_ATTORNEY_CUSTOMER_CODE = 'A01607';
+
+/**
+ * The URL that streams a workflow's generated Power of Attorney - see
+ * bizupkeep_child_handle_poa_request(), which intercepts this on
+ * template_redirect and never lets the linked-to page actually render.
+ */
+function bizupkeep_child_poa_url( string $workflow_uuid ): string {
+	return add_query_arg( 'bizupkeep_poa', $workflow_uuid, home_url( '/client-portal/client-portal-documents/' ) );
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_poa_request' );
+
+/**
+ * Stream a Company Registration or Company Amendment application's
+ * generated Power of Attorney as a standalone, print-styled HTML
+ * document - deliberately not wrapped in get_header()/get_footer(), so
+ * printing it doesn't also print the site's nav/footer. Runs on
+ * template_redirect (before any page template renders) and exits, the
+ * same "intercept early, bypass the theme" approach
+ * QualityReviewPage::streamDocument() uses on the admin side for the
+ * signed copy the client uploads back.
+ */
+function bizupkeep_child_handle_poa_request(): void {
+	if ( ! isset( $_GET['bizupkeep_poa'] ) ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( home_url( '/client-portal/client-portal-documents/' ) ) );
+		exit;
+	}
+
+	$wp_user_id    = get_current_user_id();
+	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_poa'] ) );
+
+	$workflow = bizupkeep_child_get_owned_workflow_instance( $wp_user_id, $workflow_uuid );
+
+	if ( null === $workflow || ! in_array(
+		$workflow->getWorkflowType(),
+		array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ),
+		true
+	) ) {
+		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
+	}
+
+	try {
+		$company = bizhub()->container()->get( CompanyServiceInterface::class )->getCompany( $workflow->getSubjectUuid() );
+	} catch ( \Throwable $e ) {
+		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
+	}
+
+	nocache_headers();
+	header( 'Content-Type: text/html; charset=utf-8' );
+
+	echo bizupkeep_child_render_poa_document( $workflow, $company ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- the function returns a complete, self-escaping HTML document.
+
+	exit;
+}
+
+/**
+ * Build the full standalone, print-styled HTML Power of Attorney
+ * document for a Company Registration or Company Amendment
+ * application, pre-populated from the application's own data - the
+ * company name (its first proposed name for a still-pending
+ * Registration, since the real CIPC name isn't final until approved;
+ * its current registered name plus registration number for an
+ * Amendment, since that identifies an existing, already-registered
+ * company) and the full list of directors the client entered, each
+ * with a blank Signature cell for physical, ink signing after
+ * printing. The client uploads the signed, scanned copy back under
+ * the Signed Power of Attorney document category (see
+ * BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES).
+ */
+function bizupkeep_child_render_poa_document( WorkflowInstance $workflow, Company $company ): string {
+	$is_amendment = CompanyAmendmentDefinition::TYPE === $workflow->getWorkflowType();
+
+	if ( $is_amendment ) {
+		$company_name = $company->getCompanyName();
+		$company_identifier = sprintf(
+			/* translators: 1: company name, 2: CIPC registration number */
+			__( '%1$s (registration number %2$s)', 'bizupkeep-astra-child' ),
+			$company_name,
+			$company->getRegistrationNumber()
+		);
+		$action_verb = __( 'Amend', 'bizupkeep-astra-child' );
+	} else {
+		$metadata       = $workflow->getMetadata();
+		$proposed_names = isset( $metadata['proposed_names'] ) && is_array( $metadata['proposed_names'] )
+			? $metadata['proposed_names']
+			: array();
+		$company_identifier = $proposed_names[0] ?? $company->getCompanyName();
+		$action_verb         = __( 'Register', 'bizupkeep-astra-child' );
+	}
+
+	$directors_rows = '';
+
+	foreach ( $company->getDirectors() as $index => $director ) {
+		$directors_rows .= sprintf(
+			'<tr><td>%1$d</td><td>%2$s</td><td>%3$s %4$s</td><td>%5$s</td><td class="bizupkeep-poa-signature-cell"></td></tr>',
+			$index + 1,
+			esc_html( $director->getLastName() ),
+			esc_html( $director->getFirstName() ),
+			esc_html( $director->getLastName() ),
+			esc_html( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' )
+		);
+	}
+
+	if ( '' === $directors_rows ) {
+		$directors_rows = '<tr><td colspan="5">' . esc_html__( 'No directors on file.', 'bizupkeep-astra-child' ) . '</td></tr>';
+	}
+
+	ob_start();
+	?>
+<!DOCTYPE html>
+<html lang="en-ZA">
+<head>
+	<meta charset="utf-8">
+	<title><?php esc_html_e( 'Limited Power of Attorney', 'bizupkeep-astra-child' ); ?></title>
+	<style>
+		html { background: #ffffff; color-scheme: light; }
+		body { font-family: Georgia, 'Times New Roman', serif; max-width: 800px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.6; color: #1a1a1a; background: #ffffff; }
+		h1 { text-align: center; font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.05em; }
+		table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
+		th, td { border: 1px solid #333; padding: 0.5rem 0.75rem; text-align: left; font-size: 0.95rem; }
+		.bizupkeep-poa-signature-cell { min-width: 120px; }
+		.bizupkeep-poa-print-bar { text-align: center; margin-bottom: 2rem; }
+		.bizupkeep-poa-print-bar button { font-size: 1rem; padding: 0.5rem 1.25rem; cursor: pointer; }
+		.bizupkeep-poa-date-line { margin-top: 3rem; }
+		@media print {
+			.bizupkeep-poa-print-bar { display: none; }
+			body { margin: 0; max-width: none; }
+		}
+	</style>
+</head>
+<body>
+	<div class="bizupkeep-poa-print-bar">
+		<button type="button" onclick="window.print();"><?php esc_html_e( 'Print this document', 'bizupkeep-astra-child' ); ?></button>
+	</div>
+
+	<h1><?php esc_html_e( 'Limited Power of Attorney', 'bizupkeep-astra-child' ); ?></h1>
+
+	<p>
+		<?php
+		printf(
+			/* translators: 1: attorney's full name, 2: CIPC customer code, 3: "Register" or "Amend", 4: company name (and registration number for an amendment) */
+			esc_html__(
+				'I/We the undersigned hereby nominate, constitute and appoint %1$s, with customer code %2$s, with power of substitution, to be my/our lawful representative in my/our name, place and stead to %3$s on my/our behalf a Company with the name %4$s.',
+				'bizupkeep-astra-child'
+			),
+			esc_html( BIZUPKEEP_POA_ATTORNEY_NAME ),
+			esc_html( BIZUPKEEP_POA_ATTORNEY_CUSTOMER_CODE ),
+			esc_html( $action_verb ),
+			esc_html( $company_identifier )
+		);
+		?>
+	</p>
+
+	<table>
+		<thead>
+			<tr>
+				<th><?php esc_html_e( 'Director', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Surname', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Full Names', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'ID Number', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Signature', 'bizupkeep-astra-child' ); ?></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php echo $directors_rows; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built entirely from esc_html() calls above. ?>
+		</tbody>
+	</table>
+
+	<p>
+		<?php
+		esc_html_e(
+			'I/We the undersigned members also confirm, with my/our signature(s) hereto, that I/we qualify to be (a) member(s) of the Private Company, and that my/our directorship is not in conflict with the Companies Act of 2008.',
+			'bizupkeep-astra-child'
+		);
+		?>
+	</p>
+
+	<p class="bizupkeep-poa-date-line"><?php esc_html_e( 'Date:', 'bizupkeep-astra-child' ); ?> _______________________</p>
+</body>
+</html>
+	<?php
+	return (string) ob_get_clean();
 }
 
 /**
