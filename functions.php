@@ -36,7 +36,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.15.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.16.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -2628,7 +2628,7 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 		$instance = $row['instance'];
 		$is_annual_return = AnnualReturnDefinition::TYPE === $instance->getWorkflowType();
 
-		$needs_resubmission = CompanyRegistrationDefinition::TYPE === $instance->getWorkflowType()
+		$needs_resubmission = in_array( $instance->getWorkflowType(), array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ), true )
 			&& WorkflowStatus::NamesRejected === $instance->getStatus();
 
 		$pay_url = null;
@@ -2690,8 +2690,13 @@ function bizupkeep_child_latest_rejection_reason( WorkflowInstance $instance ): 
 		return '';
 	}
 
+	$reject_name_actions = array(
+		CompanyRegistrationDefinition::ACTION_REJECT_NAME,
+		CompanyAmendmentDefinition::ACTION_REJECT_NAME,
+	);
+
 	for ( $i = count( $history ) - 1; $i >= 0; $i-- ) {
-		if ( CompanyRegistrationDefinition::ACTION_REJECT_NAME === $history[ $i ]->action ) {
+		if ( in_array( $history[ $i ]->action, $reject_name_actions, true ) ) {
 			return $history[ $i ]->reason;
 		}
 	}
@@ -2735,10 +2740,10 @@ function bizupkeep_child_handle_resubmit_names(): void {
 
 /**
  * Re-verify ownership and status, then resubmit new proposed names on
- * a Company Registration workflow currently sitting in NamesRejected -
- * moving it back to QualityReview for another look. Returns false
- * (rather than throwing) on any failure, since this runs from a
- * public-facing form submission.
+ * a Company Registration or Company Amendment (name-change) workflow
+ * currently sitting in NamesRejected - moving it back to QualityReview
+ * for another look. Returns false (rather than throwing) on any
+ * failure, since this runs from a public-facing form submission.
  */
 function bizupkeep_child_process_resubmit_names( int $wp_user_id, string $workflow_uuid ): bool {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
@@ -2747,8 +2752,10 @@ function bizupkeep_child_process_resubmit_names( int $wp_user_id, string $workfl
 
 	$workflow = bizupkeep_child_get_owned_workflow_instance( $wp_user_id, $workflow_uuid );
 
+	$resubmittable_types = array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE );
+
 	if ( null === $workflow
-		|| CompanyRegistrationDefinition::TYPE !== $workflow->getWorkflowType()
+		|| ! in_array( $workflow->getWorkflowType(), $resubmittable_types, true )
 		|| WorkflowStatus::NamesRejected !== $workflow->getStatus()
 	) {
 		return false;
@@ -2762,11 +2769,14 @@ function bizupkeep_child_process_resubmit_names( int $wp_user_id, string $workfl
 		return false;
 	}
 
+	$resubmit_action = CompanyAmendmentDefinition::TYPE === $workflow->getWorkflowType()
+		? CompanyAmendmentDefinition::ACTION_RESUBMIT_NAMES
+		: CompanyRegistrationDefinition::ACTION_RESUBMIT_NAMES;
+
 	try {
-		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
-		$registration->performAction(
+		bizupkeep_child_workflow_type_service( $workflow->getWorkflowType() )->performAction(
 			$workflow_uuid,
-			CompanyRegistrationDefinition::ACTION_RESUBMIT_NAMES,
+			$resubmit_action,
 			$wp_user_id,
 			__( 'Client resubmitted new proposed company names.', 'bizupkeep-astra-child' ),
 			array( 'proposed_names' => $proposed_names )
