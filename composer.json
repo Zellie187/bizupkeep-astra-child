@@ -1,0 +1,17 @@
+{
+    "name": "bizupkeep/astra-child-tests",
+    "description": "End-to-end test suite for the BizUpKeep Astra Child theme's critical client-facing flows. Dev-only - never bundled into the deployed theme zip.",
+    "type": "project",
+    "license": "proprietary",
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "BizUpKeep\\Tests\\E2E\\": "tests/e2e/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

@@ -1,0 +1,154 @@
+<?php
+
+declare(strict_types=1);
+
+namespace BizUpKeep\Tests\E2E;
+
+use BizUpKeep\Tests\E2E\Support\E2ETestCase;
+
+/**
+ * Covers the Company Amendment "Pay Now" flow end to end over real
+ * HTTP: submit an amendment, upload both required documents (which
+ * auto-chains verify_documents -> request_payment, landing the
+ * workflow at AwaitingPayment - see
+ * bizupkeep_child_maybe_verify_documents()), then follow the payment
+ * link and confirm it lands on a real WooCommerce checkout with the
+ * ONE product matching this amendment's exact amendment_types - the
+ * fix for the pricing gap the user asked about directly (a client
+ * bundling several change types could otherwise pick any product,
+ * with no connection to what was actually requested).
+ */
+final class PaymentFlowTest extends E2ETestCase
+{
+    private string $idDocumentPath;
+
+    private string $signedPoaPath;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->idDocumentPath = tempnam(sys_get_temp_dir(), 'bizupkeep-e2e-id-') . '.pdf';
+        $this->signedPoaPath = tempnam(sys_get_temp_dir(), 'bizupkeep-e2e-poa-') . '.pdf';
+        file_put_contents($this->idDocumentPath, "%PDF-1.4\n% E2E ID document fixture\n");
+        file_put_contents($this->signedPoaPath, "%PDF-1.4\n% E2E signed POA fixture\n");
+    }
+
+    protected function tearDown(): void
+    {
+        @unlink($this->idDocumentPath);
+        @unlink($this->signedPoaPath);
+
+        parent::tearDown();
+    }
+
+    public function test_paying_for_an_address_only_amendment_routes_to_the_matching_product(): void
+    {
+        $workflowUuid = $this->startAnAddressOnlyAmendmentAwaitingPayment();
+
+        $response = $this->http->get('/?bizupkeep_pay_amendment=' . $workflowUuid);
+
+        self::assertStringContainsString(
+            '/checkout/',
+            $response->finalUrl,
+            'Expected the payment link to land on checkout; got: ' . $response->finalUrl
+        );
+        self::assertStringContainsString(
+            'Company Amendment - Address Change',
+            $response->body,
+            'Checkout does not show the product matching this amendment\'s exact change type.'
+        );
+
+        $product = $this->db->fetchOne(
+            "SELECT p.ID FROM " . $this->db->table('posts') . " p
+             INNER JOIN " . $this->db->table('postmeta') . " pm ON pm.post_id = p.ID
+             WHERE pm.meta_key = '_sku' AND pm.meta_value = 'bizupkeep-amendment-address'"
+        );
+
+        self::assertNotNull($product, 'The bizupkeep-amendment-address product was never created.');
+    }
+
+    /**
+     * Submit an address-only amendment and upload both required
+     * documents, mirroring the real client journey through to
+     * AwaitingPayment. Returns the workflow UUID.
+     */
+    private function startAnAddressOnlyAmendmentAwaitingPayment(): string
+    {
+        $applyPage = $this->http->get('/apply/');
+        $applyNonce = $applyPage->nonce('bizupkeep_apply_nonce');
+
+        $regNumber = 'E2E-' . uniqid();
+
+        $this->http->post('/apply/', [
+            'bizupkeep_apply_nonce' => $applyNonce,
+            'application_type' => 'company_amendment',
+            'amendment_company_mode' => 'new',
+            'amendment_new_company' => [
+                'company_name' => 'E2E Payment Fixture ' . uniqid() . ' (Pty) Ltd',
+                'registration_number' => $regNumber,
+                'address' => [
+                    'address_line_1' => '1 Original Address Street',
+                    'city' => 'Cape Town',
+                    'postal_code' => '8001',
+                ],
+            ],
+            'amendment_types' => ['address'],
+            'amendment_address' => [
+                'address_line_1' => '2 New Address Avenue',
+                'city' => 'Johannesburg',
+                'province' => 'Gauteng',
+                'postal_code' => '2000',
+            ],
+        ]);
+
+        $company = $this->db->fetchOne(
+            'SELECT * FROM ' . $this->db->table('bizhub_companies') . ' WHERE registration_number = ?',
+            [$regNumber]
+        );
+        self::assertNotNull($company, 'Fixture amendment did not create a company.');
+
+        $workflow = $this->db->latestWorkflowForCompany('company_amendment', $company['uuid']);
+        self::assertNotNull($workflow, 'Fixture amendment did not create a workflow.');
+        self::assertSame('pending_documents', $workflow['status']);
+
+        $documentsPage = $this->http->get('/client-portal/client-portal-documents/');
+        $uploadNonce = $documentsPage->nonce('bizupkeep_upload_nonce');
+
+        $this->http->post(
+            '/client-portal/client-portal-documents/',
+            [
+                'bizupkeep_upload_nonce' => $uploadNonce,
+                'workflow_uuid' => $workflow['uuid'],
+                'category' => 'id_document',
+            ],
+            ['document' => $this->idDocumentPath]
+        );
+
+        $documentsPage = $this->http->get('/client-portal/client-portal-documents/');
+        $uploadNonce = $documentsPage->nonce('bizupkeep_upload_nonce');
+
+        $this->http->post(
+            '/client-portal/client-portal-documents/',
+            [
+                'bizupkeep_upload_nonce' => $uploadNonce,
+                'workflow_uuid' => $workflow['uuid'],
+                'category' => 'signed_poa',
+            ],
+            ['document' => $this->signedPoaPath]
+        );
+
+        $updated = $this->db->fetchOne(
+            'SELECT * FROM ' . $this->db->table('bizhub_workflow_instances') . ' WHERE uuid = ?',
+            [$workflow['uuid']]
+        );
+        self::assertNotNull($updated);
+        self::assertSame(
+            'awaiting_payment',
+            $updated['status'],
+            'Uploading both required documents should auto-advance to AwaitingPayment.'
+        );
+
+        return $workflow['uuid'];
+    }
+}
