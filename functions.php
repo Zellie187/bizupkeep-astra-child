@@ -9,9 +9,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-use BizHub\Applications\Contracts\ApplicationServiceInterface;
-use BizHub\Applications\DTO\ApplicationData;
-use BizHub\Applications\Services\ApplicationWorkflowService;
 use BizHub\ClientPortal\Contracts\ClientServiceInterface;
 use BizHub\ClientPortal\DTO\ClientData;
 use BizHub\ClientPortal\DTO\ProfileData;
@@ -36,7 +33,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.16.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.17.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -593,17 +590,23 @@ function bizupkeep_child_split_user_name( WP_User $wp_user ): array {
  * The header and homepage template's "Start Application" buttons have
  * always linked to /apply/, but no page existed there. This creates
  * that page (idempotently, on theme activation) using the "BizUpKeep
- * Apply" template, and wires its form to BizHub's Applications module:
- * ApplicationServiceInterface::createApplication() (there is no REST
- * route for creating applications today, only for listing/viewing/
- * submitting an existing one - see Api/V1/ApplicationController.php -
- * so this calls the service directly from the container, the same way
- * bizupkeep_child_ensure_client_record() already does for Clients).
+ * Apply" template, and wires its form to BizUpKeep Workflow's
+ * CompanyRegistrationService directly from the container, the same way
+ * bizupkeep_child_ensure_client_record() already does for Clients.
  *
- * Resolving "current user's numeric bizhub_clients.id" (required by
- * ApplicationData::$clientId) needed a small additive fix to BizHub's
- * Client entity/ClientRepository, since neither previously exposed it
- * - see Client::getId() in the bizhub plugin.
+ * Earlier versions of this handler also created a record in BizHub's
+ * older, generic Applications module (ApplicationServiceInterface) -
+ * a leftover from before this Workflow-based intake existed. Nothing
+ * ever read that record back (not the client portal, not Quality
+ * Review), so it was removed; the one real piece of data it carried,
+ * the client's free-text notes, now lives in the workflow's own
+ * client_notes metadata instead (see
+ * bizupkeep_child_submit_new_registration()).
+ *
+ * Resolving "current user's numeric bizhub_clients.id" needed a small
+ * additive fix to BizHub's Client entity/ClientRepository, since
+ * neither previously exposed it - see Client::getId() in the bizhub
+ * plugin.
  */
 add_action( 'after_switch_theme', 'bizupkeep_child_setup_apply_page' );
 
@@ -763,39 +766,26 @@ function bizupkeep_child_submit_new_registration( int $wp_user_id, string $notes
 			)
 		);
 
-		$applications = bizhub()->container()->get( ApplicationServiceInterface::class );
-
-		$message = sprintf(
-			/* translators: %s: semicolon-separated list of proposed company names, in order of preference. */
-			__( 'Proposed company names (in order of preference): %s', 'bizupkeep-astra-child' ),
-			implode( '; ', $proposed_names )
-		);
-
-		if ( '' !== $notes ) {
-			$message .= "\n\n" . $notes;
-		}
-
-		$application = $applications->createApplication(
-			new ApplicationData(
-				wp_generate_uuid4(),
-				$client_id,
-				'company_registration',
-				$company_uuid
-			)
-		);
-
-		$workflow = bizhub()->container()->get( ApplicationWorkflowService::class );
-		$workflow->addComment( $application->getUuid(), $wp_user_id, $message );
-		$workflow->submit( $application->getUuid() );
-
 		// Not wrapped in a shared DB transaction - the framework's
 		// DatabaseInterface doesn't expose one, and neither does any
 		// other module in this codebase. A failure here leaves the
-		// Company and Application rows in place without a
-		// WorkflowInstance, which is recoverable manually (the company
-		// still exists in CompanyStatus::CREATED) but not automatic.
+		// Company row in place without a WorkflowInstance, which is
+		// recoverable manually (the company still exists in
+		// CompanyStatus::CREATED) but not automatic.
+		//
+		// The client's free-text notes go straight into the workflow's
+		// own client_notes metadata (matching AnnualReturnService's
+		// pattern) rather than the older Applications module, which used
+		// to hold them as a comment nothing ever read back - see
+		// bizupkeep_child_setup_apply_page()'s docblock for the history.
 		$registration = bizhub()->container()->get( CompanyRegistrationService::class );
-		$instance     = $registration->start( $company_uuid, $wp_user_id, array( 'proposed_names' => $proposed_names ) );
+		$metadata     = array( 'proposed_names' => $proposed_names );
+
+		if ( '' !== trim( $notes ) ) {
+			$metadata['client_notes'] = $notes;
+		}
+
+		$instance = $registration->start( $company_uuid, $wp_user_id, $metadata );
 
 		// Move Created -> PendingDocuments immediately: the moment an
 		// application is submitted, the client IS being asked for
