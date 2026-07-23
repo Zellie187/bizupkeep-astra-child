@@ -33,7 +33,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.17.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.18.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -2284,6 +2284,7 @@ const BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU = 'bizupkeep-annual-return-fee';
 if ( class_exists( 'WooCommerce' ) ) {
 	add_action( 'template_redirect', 'bizupkeep_child_capture_payment_intent' );
 	add_action( 'template_redirect', 'bizupkeep_child_handle_annual_return_payment_intent' );
+	add_action( 'template_redirect', 'bizupkeep_child_handle_amendment_payment_intent' );
 	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_workflow_to_order', 10, 2 );
 	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_order_payment', 10, 4 );
 	add_action( 'woocommerce_before_calculate_totals', 'bizupkeep_child_apply_annual_return_quote_price' );
@@ -2471,6 +2472,165 @@ function bizupkeep_child_get_or_create_annual_return_fee_product(): int {
 }
 
 /**
+ * SKU prefix for the lazily-created, hidden Company Amendment products -
+ * one per non-empty subset of {director, name, address} (7 in total).
+ * Unlike Registration's open packages category,
+ * bizupkeep_child_amendment_payment_url() routes the client straight to
+ * checkout with the ONE product matching exactly what they submitted,
+ * so a bundled director+name+address change can never be paid for at a
+ * single-change-type price (or vice versa) - see
+ * bizupkeep_child_amendment_sku().
+ */
+const BIZUPKEEP_AMENDMENT_SKU_PREFIX = 'bizupkeep-amendment-';
+
+/**
+ * Build the canonical SKU for a set of amendment types - sorted
+ * alphabetically so the same combination always maps to the same
+ * product regardless of the order the client happened to submit them
+ * in. Unrecognised type strings are dropped rather than trusted
+ * verbatim into a SKU.
+ *
+ * @param array<int,string> $amendmentTypes
+ */
+function bizupkeep_child_amendment_sku( array $amendmentTypes ): string {
+	$types = array_values( array_intersect( $amendmentTypes, CompanyAmendmentDefinition::ALL_AMENDMENT_TYPES ) );
+	sort( $types );
+
+	return BIZUPKEEP_AMENDMENT_SKU_PREFIX . implode( '-', $types );
+}
+
+/**
+ * Human-readable label for a single amendment type, used only to name
+ * the auto-created products below - mirrors
+ * QualityReviewPage::amendmentTypeLabel() in bizupkeep-workflow, kept
+ * separate since that's an admin-side display concern.
+ */
+function bizupkeep_child_amendment_type_label( string $type ): string {
+	return match ( $type ) {
+		CompanyAmendmentDefinition::AMENDMENT_TYPE_DIRECTOR => __( 'Director Change', 'bizupkeep-astra-child' ),
+		CompanyAmendmentDefinition::AMENDMENT_TYPE_NAME => __( 'Name Change', 'bizupkeep-astra-child' ),
+		CompanyAmendmentDefinition::AMENDMENT_TYPE_ADDRESS => __( 'Address Change', 'bizupkeep-astra-child' ),
+		default => ucfirst( $type ),
+	};
+}
+
+/**
+ * Idempotently find (or create) the hidden product for a specific
+ * amendment-type combination. Created at a 0 placeholder price -
+ * staff must set the real price for each combination in WooCommerce
+ * (Products screen, searchable by its bizupkeep-amendment- SKU) before
+ * clients relying on that exact combination can be charged correctly.
+ * Hidden from the shop/search catalog since it's never meant to be
+ * browsed, only added to cart programmatically, same as the Annual
+ * Return fee product.
+ *
+ * @param array<int,string> $amendmentTypes
+ */
+function bizupkeep_child_get_or_create_amendment_product( array $amendmentTypes ): int {
+	$types = array_values( array_intersect( $amendmentTypes, CompanyAmendmentDefinition::ALL_AMENDMENT_TYPES ) );
+
+	if ( array() === $types ) {
+		return 0;
+	}
+
+	$sku      = bizupkeep_child_amendment_sku( $types );
+	$existing = wc_get_product_id_by_sku( $sku );
+
+	if ( $existing ) {
+		return (int) $existing;
+	}
+
+	if ( ! class_exists( 'WC_Product_Simple' ) ) {
+		return 0;
+	}
+
+	sort( $types );
+	$name = sprintf(
+		/* translators: %s: "&"-joined list of change types, e.g. "Director Change & Name Change" */
+		__( 'Company Amendment - %s', 'bizupkeep-astra-child' ),
+		implode( ' & ', array_map( 'bizupkeep_child_amendment_type_label', $types ) )
+	);
+
+	$product = new WC_Product_Simple();
+	$product->set_name( $name );
+	$product->set_sku( $sku );
+	$product->set_regular_price( '0' );
+	$product->set_price( '0' );
+	$product->set_virtual( true );
+	$product->set_catalog_visibility( 'hidden' );
+	$product->set_status( 'publish' );
+
+	return (int) $product->save();
+}
+
+/**
+ * Build the "Pay Now" URL for a Company Amendment application
+ * specifically - unlike bizupkeep_child_payment_url() (Registration's
+ * open packages category, still used there since a Registration has
+ * no sub-types to combine), this routes straight to
+ * bizupkeep_child_handle_amendment_payment_intent(), which adds the ONE
+ * product matching this application's exact amendment_types to a
+ * cleared cart and redirects straight to checkout.
+ */
+function bizupkeep_child_amendment_payment_url( string $workflow_uuid ): string {
+	return add_query_arg(
+		'bizupkeep_pay_amendment',
+		$workflow_uuid,
+		home_url( '/client-portal/client-portal-applications/' )
+	);
+}
+
+/**
+ * Handle ?bizupkeep_pay_amendment={workflow_uuid}: verify the
+ * application belongs to the logged-in client and is actually a
+ * Company Amendment sitting in AwaitingPayment (both should already be
+ * true by the time a "Pay Now" link exists at all, but this is the
+ * actual trust boundary, not the link) - then resolve (or lazily
+ * create) the ONE product matching its amendment_types, clear the
+ * cart, add that product, and send the client straight to checkout.
+ * The cart is deliberately emptied first so an Amendment payment is
+ * never accidentally combined with an unrelated item.
+ */
+function bizupkeep_child_handle_amendment_payment_intent(): void {
+	if ( ! isset( $_GET['bizupkeep_pay_amendment'] ) || ! is_user_logged_in() ) {
+		return;
+	}
+
+	if ( null === WC()->cart || null === WC()->session ) {
+		return;
+	}
+
+	$fallback_url  = home_url( '/client-portal/client-portal-applications/' );
+	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_pay_amendment'] ) );
+	$workflow      = bizupkeep_child_get_owned_workflow_instance( get_current_user_id(), $workflow_uuid );
+
+	if ( null === $workflow
+		|| CompanyAmendmentDefinition::TYPE !== $workflow->getWorkflowType()
+		|| WorkflowStatus::AwaitingPayment !== $workflow->getStatus()
+	) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	$amendment_types = $workflow->getMetadata()['amendment_types'] ?? array();
+	$product_id      = is_array( $amendment_types )
+		? bizupkeep_child_get_or_create_amendment_product( $amendment_types )
+		: 0;
+
+	if ( 0 === $product_id ) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	WC()->cart->empty_cart();
+	WC()->cart->add_to_cart( $product_id, 1 );
+	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $workflow_uuid );
+
+	wp_safe_redirect( wc_get_checkout_url() );
+	exit;
+}
+
+/**
  * At checkout, copy the pending application's workflow UUID from the
  * WooCommerce session onto the new order as post meta, so it survives
  * past the session into something permanently queryable against the
@@ -2624,9 +2784,11 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 		$pay_url = null;
 
 		if ( WorkflowStatus::AwaitingPayment === $instance->getStatus() && class_exists( 'WooCommerce' ) ) {
-			$pay_url = $is_annual_return
-				? bizupkeep_child_annual_return_payment_url( $instance->getUuid() )
-				: bizupkeep_child_payment_url( $instance->getUuid() );
+			$pay_url = match ( $instance->getWorkflowType() ) {
+				AnnualReturnDefinition::TYPE => bizupkeep_child_annual_return_payment_url( $instance->getUuid() ),
+				CompanyAmendmentDefinition::TYPE => bizupkeep_child_amendment_payment_url( $instance->getUuid() ),
+				default => bizupkeep_child_payment_url( $instance->getUuid() ),
+			};
 		}
 
 		$metadata     = $instance->getMetadata();
