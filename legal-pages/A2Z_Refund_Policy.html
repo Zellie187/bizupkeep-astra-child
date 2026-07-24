@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Refund Policy | A2Z Business Administrators</title>
+  <style>
+    :root {
+      --brand:   #1c3d5a;
+      --brand-dark: #274b6b;
+      --accent:  #f2994a;
+      --accent-100: #FFEDD5;
+      --accent-200: #FED7AA;
+      --accent-300: #FDBA74;
+      --light-bg:#f7f8fa;
+      --grey:    #6B7280;
+      --text:    #2b2b2b;
+      --border:  #D1D5DB;
+      --white:   #FFFFFF;
+      --footer-bg: #14202e;
+      --footer-text: #cfd6dd;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; font-size: 16px; line-height: 1.75; color: var(--text); background: #F9FAFB; }
+    .top-banner { background: linear-gradient(135deg, var(--brand), var(--brand-dark)); color: var(--white); text-align: center; padding: 48px 24px 40px; }
+    .top-banner .company { font-size: 13px; font-weight: 600; letter-spacing: 3px; text-transform: uppercase; color: #FDBA74; margin-bottom: 10px; }
+    .top-banner h1 { font-size: clamp(28px, 5vw, 42px); font-weight: 800; letter-spacing: 1px; margin-bottom: 12px; }
+    .top-banner .subtitle { font-size: 14px; font-style: italic; color: #FED7AA; margin-bottom: 18px; }
+    .meta-pills { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    .pill { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25); border-radius: 20px; padding: 4px 16px; font-size: 13px; color: #FFEDD5; }
+    .contact-bar { background: var(--accent); display: flex; flex-wrap: wrap; justify-content: center; }
+    .contact-bar a { display: flex; align-items: center; gap: 8px; padding: 12px 24px; color: var(--white); font-size: 13.5px; text-decoration: none; border-right: 1px solid rgba(255,255,255,0.2); }
+    .contact-bar a:last-child { border-right: none; }
+    .contact-bar a:hover { background: rgba(255,255,255,0.12); }
+    .page-wrap { max-width: 900px; margin: 0 auto; padding: 0 20px 60px; }
+    .toc { background: var(--white); border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: 6px; padding: 28px 32px; margin: 40px 0 0; }
+    .toc h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--brand); margin-bottom: 16px; }
+    .toc ol { padding-left: 20px; columns: 2; column-gap: 40px; }
+    .toc li { margin-bottom: 6px; break-inside: avoid; }
+    .toc a { color: var(--accent); text-decoration: none; font-size: 14px; }
+    .toc a:hover { text-decoration: underline; }
+    .section { background: var(--white); border-radius: 8px; border: 1px solid var(--border); padding: 36px 40px; margin-top: 28px; }
+    h2.section-title { font-size: 21px; font-weight: 800; color: var(--brand); display: flex; align-items: center; gap: 12px; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 2px solid var(--light-bg); }
+    .section-num { background: var(--brand); color: var(--white); font-size: 13px; font-weight: 700; width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    h3 { font-size: 15px; font-weight: 700; color: var(--accent); margin: 22px 0 10px; }
+    p { margin-bottom: 14px; font-size: 15px; color: var(--text); }
+    p:last-child { margin-bottom: 0; }
+    ul { padding-left: 22px; margin-bottom: 14px; }
+    li { margin-bottom: 6px; font-size: 15px; color: var(--text); }
+    .scenario-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 20px; }
+    .scenario-card { border-radius: 8px; padding: 20px; border-top: 4px solid transparent; }
+    .scenario-card.full { background: #F0FDF4; border-color: #22C55E; }
+    .scenario-card.partial { background: #FEF9C3; border-color: #F59E0B; }
+    .scenario-card.none { background: #FEF2F2; border-color: #EF4444; }
+    .scenario-card h4 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .scenario-card.full h4 { color: #15803D; }
+    .scenario-card.partial h4 { color: #B45309; }
+    .scenario-card.none h4 { color: #B91C1C; }
+    .scenario-card p { font-size: 13.5px; margin-bottom: 0; }
+    .timeline { margin: 20px 0; border-left: 3px solid var(--accent); padding-left: 24px; }
+    .timeline-item { position: relative; margin-bottom: 24px; }
+    .timeline-item:last-child { margin-bottom: 0; }
+    .timeline-dot { position: absolute; left: -32px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 3px solid var(--white); box-shadow: 0 0 0 2px var(--accent); }
+    .timeline-item h4 { font-size: 14px; font-weight: 700; color: var(--brand); margin-bottom: 4px; }
+    .timeline-item p { font-size: 14px; margin-bottom: 0; }
+    .info-box { background: var(--light-bg); border: 1px solid #FED7AA; border-left: 4px solid var(--accent); border-radius: 6px; padding: 20px 24px; margin: 16px 0; }
+    .info-box strong { color: var(--brand); display: block; margin-bottom: 8px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .info-box p { margin-bottom: 6px; font-size: 14px; }
+    .info-box a { color: var(--accent); }
+    .warning-box { background: #FEF2F2; border: 1px solid #FECACA; border-left: 4px solid #EF4444; border-radius: 6px; padding: 16px 20px; margin: 16px 0; font-size: 14px; }
+    .warning-box strong { color: #B91C1C; }
+    .highlight-box { background: #FEF9C3; border: 1px solid #FDE68A; border-left: 4px solid #F59E0B; border-radius: 6px; padding: 16px 20px; margin: 16px 0; font-size: 14px; font-style: italic; }
+    .dark-box { background: var(--brand); color: var(--white); border-radius: 8px; padding: 22px 28px; margin: 20px 0; }
+    .dark-box strong { display: block; font-size: 15px; margin-bottom: 12px; color: #FDBA74; }
+    .dark-box p { font-size: 14px; color: #FFEDD5; margin-bottom: 6px; }
+    .dark-box a { color: #FED7AA; }
+    .back-top { display: block; text-align: right; font-size: 13px; color: var(--accent); text-decoration: none; margin-top: 10px; }
+    .back-top:hover { text-decoration: underline; }
+    .page-footer { background: var(--footer-bg); color: var(--footer-text); text-align: center; padding: 30px 20px; font-size: 13px; margin-top: 48px; }
+    .page-footer a { color: var(--accent-200); }
+    .page-footer a:hover { color: var(--accent); }
+    @media (max-width: 600px) {
+      .section { padding: 24px 20px; }
+      .toc ol { columns: 1; }
+      .contact-bar a { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.2); width: 100%; justify-content: center; }
+      .scenario-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="top-banner">
+  <div class="company">A2Z Business Administrators t/a BizUpKeep</div>
+  <h1>Refund Policy</h1>
+  <p class="subtitle">Fair, transparent, and compliant with the Consumer Protection Act 68 of 2008</p>
+  <div class="meta-pills">
+    <span class="pill">📅 Effective Date: 3 July 2026</span>
+    <span class="pill">📄 Version 1.0</span>
+    <span class="pill">🇿🇦 South African Law</span>
+    <span class="pill">🏢 Reg No: 2017/182869/07</span>
+  </div>
+</div>
+
+<div class="contact-bar">
+  <a href="mailto:info@bizupkeep.co.za">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+    info@bizupkeep.co.za
+  </a>
+  <a href="mailto:billing@bizupkeep.co.za">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+    billing@bizupkeep.co.za
+  </a>
+  <a href="tel:0743499113">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+    074 349 9113
+  </a>
+</div>
+
+<div class="page-wrap">
+
+  <nav class="toc" id="top">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#s1">Overview</a></li>
+      <li><a href="#s2">Definitions</a></li>
+      <li><a href="#s3">Nature of Our Services</a></li>
+      <li><a href="#s4">Refund Eligibility at a Glance</a></li>
+      <li><a href="#s5">Cancellation Before Processing</a></li>
+      <li><a href="#s6">Cancellation After Processing Begins</a></li>
+      <li><a href="#s7">Government and Third-Party Fees</a></li>
+      <li><a href="#s8">CIPC Rejections and Failures</a></li>
+      <li><a href="#s9">Service Errors by A2Z</a></li>
+      <li><a href="#s10">Non-Refundable Situations</a></li>
+      <li><a href="#s11">How to Request a Refund</a></li>
+      <li><a href="#s12">Refund Processing and Timeline</a></li>
+      <li><a href="#s13">Your Consumer Rights (CPA)</a></li>
+      <li><a href="#s14">Contact Us</a></li>
+    </ol>
+  </nav>
+
+  <div class="info-box" style="margin-top:28px;">
+    <strong>Our Commitment to Fairness</strong>
+    <p>We understand that navigating business registrations can be complex. This policy is designed to be straightforward and fair. If you are ever unsure about your eligibility for a refund, please contact us before proceeding — we are happy to assist.</p>
+  </div>
+
+  <div class="section" id="s1">
+    <h2 class="section-title"><span class="section-num">1</span> Overview</h2>
+    <p>A2Z Business Administrators (Registration No. 2017/182869/07), trading as BizUpKeep, strives to deliver accurate, efficient, and professional services. We recognise, however, that circumstances may arise where a client needs to cancel a service or is dissatisfied with an outcome. This Refund Policy sets out the terms under which refunds may be granted.</p>
+    <p>This policy must be read together with our <a href="terms-and-conditions" style="color:var(--accent);">Terms and Conditions</a> and <a href="privacy-policy" style="color:var(--accent);">Privacy Policy</a>, all of which form part of our service agreement with you.</p>
+    <p>Because we provide <strong>professional administrative services</strong> that involve time, expertise, and in many cases the payment of non-recoverable government fees to the CIPC on your behalf, refunds are evaluated on a case-by-case basis according to the stage of processing and the circumstances of the request.</p>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s2">
+    <h2 class="section-title"><span class="section-num">2</span> Definitions</h2>
+    <ul>
+      <li><strong>"Service Fee"</strong> — the amount charged by A2Z Business Administrators for our professional administrative services, excluding any government or third-party fees.</li>
+      <li><strong>"Government Fee"</strong> — any amount paid to the CIPC or other regulatory body on your behalf as part of the registration or filing process.</li>
+      <li><strong>"Processing"</strong> — any action taken by A2Z Business Administrators on your application, including document preparation, CIPC submissions, name reservations, or communication with regulatory bodies.</li>
+      <li><strong>"Order"</strong> — a confirmed service request placed by the Client accompanied by payment.</li>
+      <li><strong>"Business Day"</strong> — any day other than a Saturday, Sunday, or South African public holiday.</li>
+      <li><strong>"CPA"</strong> — Consumer Protection Act 68 of 2008.</li>
+      <li><strong>"CIPC"</strong> — Companies and Intellectual Property Commission of South Africa.</li>
+    </ul>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s3">
+    <h2 class="section-title"><span class="section-num">3</span> Nature of Our Services</h2>
+    <p>It is important to understand the nature of the services we provide before placing an order:</p>
+    <ul>
+      <li>Our services are <strong>professional administrative services</strong>, not the sale of a physical product. Once work has commenced, time, expertise, and resources have been expended.</li>
+      <li>Many of our services require the upfront payment of <strong>non-refundable government fees</strong> to the CIPC, which we pay on your behalf. These fees cannot be recovered once submitted.</li>
+      <li>The outcome of applications submitted to the CIPC is <strong>at the discretion of the CIPC</strong>. We cannot guarantee approval of any registration, name reservation, or filing.</li>
+      <li>Delays and rejections caused by CIPC system issues, government processing backlogs, or inaccurate information provided by the Client are <strong>outside our control</strong>.</li>
+    </ul>
+    <div class="highlight-box">By placing an order and making payment, you acknowledge and accept the above constraints and the refund terms that follow.</div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s4">
+    <h2 class="section-title"><span class="section-num">4</span> Refund Eligibility at a Glance</h2>
+    <p>The following summary gives a quick overview of refund outcomes by scenario. Full details for each scenario are set out in the sections that follow.</p>
+    <div class="scenario-grid">
+      <div class="scenario-card full">
+        <h4>&#10003; Full Refund</h4>
+        <p>Order cancelled before any processing has commenced and no government fees have been paid.</p>
+      </div>
+      <div class="scenario-card full">
+        <h4>&#10003; Full Refund</h4>
+        <p>Error or fault on our part that prevents successful completion of the service, where re-performance is not possible.</p>
+      </div>
+      <div class="scenario-card partial">
+        <h4>&#9888; Partial Refund</h4>
+        <p>Order cancelled after processing has begun but before government fees are submitted. Service fee refunded less a handling fee.</p>
+      </div>
+      <div class="scenario-card partial">
+        <h4>&#9888; Partial Refund</h4>
+        <p>CIPC rejection due to factors outside our control. Our service fee may be partially refunded; government fees are non-refundable.</p>
+      </div>
+      <div class="scenario-card none">
+        <h4>&#10007; No Refund</h4>
+        <p>Cancellation after government fees have been submitted to the CIPC on your behalf.</p>
+      </div>
+      <div class="scenario-card none">
+        <h4>&#10007; No Refund</h4>
+        <p>Rejection caused by inaccurate, false, or incomplete information provided by the Client.</p>
+      </div>
+    </div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s5">
+    <h2 class="section-title"><span class="section-num">5</span> Cancellation Before Processing</h2>
+    <p>If you cancel your order <strong>before A2Z Business Administrators has commenced any work</strong> on your application and before any government fees have been paid on your behalf, you are entitled to a refund of your service fee, less a non-refundable administrative handling fee.</p>
+    <div class="info-box">
+      <strong>Administrative Handling Fee</strong>
+      <p>A handling fee of <strong>R150.00 (incl. VAT)</strong> applies to all cancellations to cover payment processing, administration, and bank charges incurred. This fee is non-negotiable and non-refundable.</p>
+    </div>
+    <p>To qualify for a pre-processing refund, you must notify us in writing by email to <a href="mailto:billing@bizupkeep.co.za" style="color:var(--accent);">billing@bizupkeep.co.za</a> as soon as possible after placing your order. We will confirm whether processing has commenced within 1 (one) Business Day of receiving your cancellation request.</p>
+    <div class="highlight-box">Act quickly — once your application enters our processing queue, we may have already begun preparing documents or submitting information to the CIPC.</div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s6">
+    <h2 class="section-title"><span class="section-num">6</span> Cancellation After Processing Has Commenced</h2>
+    <p>Once A2Z Business Administrators has commenced work on your application, refunds are assessed based on the stage reached:</p>
+    <div class="timeline">
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Stage 1 — Documents Being Prepared</h4>
+        <p>Work has begun but no government fees have been submitted. A partial refund of the service fee may be granted, less a proportional charge for work completed and the R150 handling fee.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Stage 2 — Application Submitted to CIPC</h4>
+        <p>Government fees have been paid and your application has been submitted. No refund is available for government fees. Our service fee is non-refundable at this stage, except where an error on our part is identified.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Stage 3 — CIPC Processing Underway</h4>
+        <p>Your application is actively being processed by the CIPC. No refunds are available at this stage. Any concerns should be raised so we can assist in following up with the CIPC on your behalf.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Stage 4 — Service Successfully Completed</h4>
+        <p>Your registration or filing has been confirmed and documents delivered. The service has been fully rendered and no refunds are available after successful completion.</p>
+      </div>
+    </div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s7">
+    <h2 class="section-title"><span class="section-num">7</span> Government and Third-Party Fees</h2>
+    <p>Certain services require the payment of fees to the CIPC or other regulatory bodies. These fees are paid directly on your behalf as part of the service and are <strong>strictly non-refundable</strong> once submitted, regardless of the reason for cancellation.</p>
+    <p>Government fees are set by and payable to the CIPC. A2Z Business Administrators has no control over these fees, cannot recover them once paid, and accepts no liability for any increases in government fees after a quotation has been issued to you.</p>
+    <div class="warning-box">
+      <strong>&#9888; Non-Refundable Government Fees:</strong>
+      <p style="margin-top:6px; margin-bottom:0;">Once government fees have been submitted to the CIPC on your behalf, these amounts are permanently non-refundable under any circumstances, including CIPC rejection, client-initiated cancellation, or change of mind.</p>
+    </div>
+    <p>Where government fees are included in a bundled service price, the non-refundable government fee component will be clearly communicated to you prior to payment. On request, we will provide an itemised breakdown of our service fee versus the government fee portion.</p>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s8">
+    <h2 class="section-title"><span class="section-num">8</span> CIPC Rejections and Application Failures</h2>
+    <p>We cannot guarantee that every application submitted to the CIPC will be approved. Rejections may occur for various reasons, and our refund position differs depending on the cause:</p>
+    <h3>8.1 Rejection Due to Client-Provided Information</h3>
+    <p>If your application is rejected because of <strong>inaccurate, false, incomplete, or non-compliant information provided by you</strong> — including an already-registered company name, duplicate director ID numbers, or non-compliant documentation — no refund will be issued for government fees or our service fee. We will advise you on the steps required to resubmit, which may involve a new order and additional fees.</p>
+    <h3>8.2 Rejection Due to CIPC System Errors or Processing Issues</h3>
+    <p>If your application is rejected solely due to a <strong>CIPC system error, technical fault, or internal CIPC processing issue</strong> unrelated to any error on our part or yours, we will resubmit your application at no additional charge. If resubmission is not possible or you choose not to proceed, our service fee will be refunded. Government fees already paid remain non-refundable.</p>
+    <h3>8.3 Rejection Due to Our Error</h3>
+    <p>If your application is rejected due to a <strong>verified error made by A2Z Business Administrators</strong> — such as incorrect data entry or submission of wrong documentation by us — we will correct and resubmit at no cost to you. If the error cannot be corrected, a full refund of all fees (including government fees where recoverable) will be issued. Please refer to Section 9 for further detail.</p>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s9">
+    <h2 class="section-title"><span class="section-num">9</span> Service Errors by A2Z Business Administrators</h2>
+    <p>We hold ourselves to a high standard of accuracy and professionalism. If we make an error that directly causes your application to fail or that results in demonstrable harm, we will take full responsibility. Where a service failure is directly attributable to us, your options are:</p>
+    <ul>
+      <li><strong>Re-performance:</strong> We will redo or correct the service at no additional cost to you — this is our preferred first remedy.</li>
+      <li><strong>Full refund:</strong> If re-performance is not possible or you do not wish to proceed, we will issue a full refund of all amounts paid to us. Government fees will be refunded to the extent they are recoverable from the CIPC.</li>
+    </ul>
+    <p>To report a service error, please contact us in writing at <a href="mailto:info@bizupkeep.co.za" style="color:var(--accent);">info@bizupkeep.co.za</a> with your order reference and a description of the issue. We will investigate and respond within 3 (three) Business Days.</p>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s10">
+    <h2 class="section-title"><span class="section-num">10</span> Non-Refundable Situations</h2>
+    <p>No refund will be issued in any of the following circumstances:</p>
+    <ul>
+      <li>The service has been successfully completed and documents have been delivered to you</li>
+      <li>Cancellation is requested after government fees have been submitted to the CIPC on your behalf</li>
+      <li>The application was rejected due to inaccurate, incomplete, or fraudulent information provided by you</li>
+      <li>The rejection or delay was caused by a change in CIPC requirements, government policy, or legislation after your order was placed</li>
+      <li>You changed your mind about the entity type, company name, or business structure after processing commenced</li>
+      <li>Delays caused by your failure to provide required documents or information timeously</li>
+      <li>Dissatisfaction with CIPC processing times, government turnaround times, or outcomes outside our control</li>
+      <li>Services delivered correctly that did not achieve the outcome you expected due to third-party decisions</li>
+    </ul>
+    <div class="warning-box">
+      <strong>Please note:</strong> A change of mind does not constitute grounds for a refund once processing has commenced. We strongly encourage you to confirm all requirements before placing an order.
+    </div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s11">
+    <h2 class="section-title"><span class="section-num">11</span> How to Request a Refund</h2>
+    <p>All refund requests must be submitted in writing. We do not accept verbal refund requests. Please follow these steps:</p>
+    <div class="timeline">
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Step 1 — Submit Your Request in Writing</h4>
+        <p>Email your refund request to <a href="mailto:billing@bizupkeep.co.za" style="color:var(--accent);">billing@bizupkeep.co.za</a> with the subject line: <em>"Refund Request — [Your Order Reference Number]"</em>.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Step 2 — Include the Required Information</h4>
+        <p>Your email must include your full name, order reference number, the service requested, date of payment, reason for the refund request, and any supporting documentation.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Step 3 — Await Acknowledgement</h4>
+        <p>We will acknowledge receipt of your request within 1 (one) Business Day and confirm the current processing stage of your application.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Step 4 — Review and Decision</h4>
+        <p>We will assess your request against this policy and communicate our decision — including the amount (if any) to be refunded and the reason — within 5 (five) Business Days.</p>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <h4>Step 5 — Refund Payment</h4>
+        <p>Approved refunds will be processed within 7 (seven) Business Days of approval, returned to the original payment method or via EFT to your nominated bank account.</p>
+      </div>
+    </div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s12">
+    <h2 class="section-title"><span class="section-num">12</span> Refund Processing and Timeline</h2>
+    <p>Once a refund has been approved, the following timelines apply:</p>
+    <ul>
+      <li><strong>Card payments (Stripe):</strong> Refunds are returned to the original card and typically appear within 5 – 10 Business Days, depending on your bank.</li>
+      <li><strong>EFT / Bank Transfer payments:</strong> Refunds are processed via EFT to your nominated bank account within 7 (seven) Business Days of approval. You will be asked to provide your banking details.</li>
+    </ul>
+    <div class="info-box">
+      <strong>Please Note</strong>
+      <p>A2Z Business Administrators is not responsible for delays caused by your bank or payment provider in processing refunds. If you have not received your refund within the stated period, please check with your bank before contacting us.</p>
+    </div>
+    <p>All refunds are issued in South African Rand (ZAR). Currency fluctuation is not grounds for an additional refund.</p>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s13">
+    <h2 class="section-title"><span class="section-num">13</span> Your Consumer Rights (CPA)</h2>
+    <p>Nothing in this Refund Policy is intended to limit, exclude, or override any rights you have as a consumer under the <strong>Consumer Protection Act 68 of 2008 (CPA)</strong> or any other applicable South African legislation. Under the CPA, you have the right to:</p>
+    <ul>
+      <li>Receive services performed in a manner and quality that persons are generally entitled to expect</li>
+      <li>Receive a remedy (repair, replacement, or refund) where a service fails to meet the required standard</li>
+      <li>Cancel a fixed-term agreement with reasonable notice, subject to a reasonable cancellation penalty</li>
+      <li>Fair, honest, and transparent dealing in all transactions</li>
+    </ul>
+    <p>If you believe your consumer rights have not been upheld, you may contact the following bodies:</p>
+    <div class="dark-box">
+      <strong>Consumer Dispute Resolution Options</strong>
+      <p>&#127963; <strong style="color:#FED7AA;">National Consumer Commission (NCC):</strong> <a href="https://www.thencc.gov.za" target="_blank" rel="noopener">www.thencc.gov.za</a> | 0860 266 786</p>
+      <p>&#9878; <strong style="color:#FED7AA;">Consumer Goods &amp; Services Ombud (CGSO):</strong> <a href="https://www.cgso.org.za" target="_blank" rel="noopener">www.cgso.org.za</a> | 0860 000 272</p>
+      <p>&#127962; <strong style="color:#FED7AA;">National Consumer Tribunal (NCT):</strong> <a href="https://www.thenct.org.za" target="_blank" rel="noopener">www.thenct.org.za</a></p>
+    </div>
+    <p>We encourage you to contact us first. We are committed to resolving all complaints fairly and promptly.</p>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+  <div class="section" id="s14">
+    <h2 class="section-title"><span class="section-num">14</span> Contact Us</h2>
+    <p>If you have any questions about this Refund Policy or wish to discuss a refund request, please get in touch with us. We are here to help.</p>
+    <div class="info-box" style="margin-top:16px;">
+      <strong>A2Z Business Administrators — Billing &amp; Refunds</strong>
+      <p>&#128231; Refund Requests &amp; Billing: <a href="mailto:billing@bizupkeep.co.za">billing@bizupkeep.co.za</a></p>
+      <p>&#128231; General Enquiries: <a href="mailto:info@bizupkeep.co.za">info@bizupkeep.co.za</a></p>
+      <p>&#128222; Telephone: <a href="tel:0743499113">074 349 9113</a></p>
+      <p>&#8987; Response time: within 3 Business Days for general queries; within 1 Business Day for refund acknowledgements.</p>
+    </div>
+    <a href="#top" class="back-top">&#8593; Back to top</a>
+  </div>
+
+</div>
+
+<footer class="page-footer">
+  <p>&copy; 2026 A2Z Business Administrators t/a BizUpKeep (Reg. No. 2017/182869/07). All rights reserved.</p>
+  <p style="margin-top:6px;">This Refund Policy was last updated on 3 July 2026. | <a href="mailto:billing@bizupkeep.co.za">billing@bizupkeep.co.za</a></p>
+</footer>
+
+</body>
+</html>

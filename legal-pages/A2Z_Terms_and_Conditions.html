@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terms &amp; Conditions | A2Z Business Administrators</title>
+  <style>
+    :root {
+      --brand:   #1c3d5a;
+      --brand-dark: #274b6b;
+      --accent:  #f2994a;
+      --accent-100: #FFEDD5;
+      --accent-200: #FED7AA;
+      --accent-300: #FDBA74;
+      --light-bg:#f7f8fa;
+      --grey:    #6B7280;
+      --text:    #2b2b2b;
+      --border:  #D1D5DB;
+      --white:   #FFFFFF;
+      --footer-bg: #14202e;
+      --footer-text: #cfd6dd;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+      color: var(--text);
+      background: #F9FAFB;
+    }
+
+    /* ── TOP BANNER ── */
+    .top-banner {
+      background: linear-gradient(135deg, var(--brand), var(--brand-dark));
+      color: var(--white);
+      text-align: center;
+      padding: 48px 24px 40px;
+    }
+    .top-banner .company {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #FDBA74;
+      margin-bottom: 10px;
+    }
+    .top-banner h1 {
+      font-size: clamp(28px, 5vw, 42px);
+      font-weight: 800;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+    .top-banner .subtitle {
+      font-size: 14px;
+      font-style: italic;
+      color: #FED7AA;
+      margin-bottom: 18px;
+    }
+    .meta-pills {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 20px;
+      padding: 4px 16px;
+      font-size: 13px;
+      color: #FFEDD5;
+    }
+
+    /* ── CONTACT BAR ── */
+    .contact-bar {
+      background: var(--accent);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0;
+    }
+    .contact-bar a {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      color: var(--white);
+      font-size: 13.5px;
+      text-decoration: none;
+      border-right: 1px solid rgba(255,255,255,0.2);
+    }
+    .contact-bar a:last-child { border-right: none; }
+    .contact-bar a:hover { background: rgba(255,255,255,0.12); }
+
+    /* ── LAYOUT ── */
+    .page-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px 60px;
+    }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--brand);
+      border-radius: 6px;
+      padding: 28px 32px;
+      margin: 40px 0 0;
+    }
+    .toc h2 {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--brand);
+      margin-bottom: 16px;
+    }
+    .toc ol {
+      padding-left: 20px;
+      columns: 2;
+      column-gap: 40px;
+    }
+    .toc li { margin-bottom: 6px; break-inside: avoid; }
+    .toc a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .toc a:hover { text-decoration: underline; }
+
+    /* ── SECTIONS ── */
+    .section {
+      background: var(--white);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      padding: 36px 40px;
+      margin-top: 28px;
+    }
+
+    h2.section-title {
+      font-size: 21px;
+      font-weight: 800;
+      color: var(--brand);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid var(--light-bg);
+    }
+    .section-num {
+      background: var(--brand);
+      color: var(--white);
+      font-size: 13px;
+      font-weight: 700;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent);
+      margin: 22px 0 10px;
+    }
+
+    p { margin-bottom: 14px; font-size: 15px; color: var(--text); }
+    p:last-child { margin-bottom: 0; }
+
+    ul, ol.content-list {
+      padding-left: 22px;
+      margin-bottom: 14px;
+    }
+    li {
+      margin-bottom: 6px;
+      font-size: 15px;
+      color: var(--text);
+    }
+
+    /* ── INFO BOX ── */
+    .info-box {
+      background: var(--light-bg);
+      border: 1px solid #FED7AA;
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
+      padding: 20px 24px;
+      margin: 16px 0;
+    }
+    .info-box strong {
+      color: var(--brand);
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .info-box p { margin-bottom: 6px; font-size: 14px; }
+    .info-box a { color: var(--accent); }
+
+    /* ── WARNING BOX ── */
+    .warning-box {
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-left: 4px solid #EF4444;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    .warning-box strong { color: #B91C1C; }
+
+    /* ── HIGHLIGHT BOX ── */
+    .highlight-box {
+      background: #FEF9C3;
+      border: 1px solid #FDE68A;
+      border-left: 4px solid #F59E0B;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin: 16px 0;
+      font-size: 14px;
+      font-style: italic;
+    }
+
+    /* ── PRICING TABLE ── */
+    .price-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
+    .price-table th {
+      background: var(--brand);
+      color: var(--white);
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .price-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .price-table tr:nth-child(even) td { background: var(--light-bg); }
+    .price-table tr:last-child td { border-bottom: none; }
+
+    /* ── DARK BOX ── */
+    .dark-box {
+      background: var(--brand);
+      color: var(--white);
+      border-radius: 8px;
+      padding: 22px 28px;
+      margin: 20px 0;
+    }
+    .dark-box strong { display: block; font-size: 15px; margin-bottom: 12px; color: #FDBA74; }
+    .dark-box p { font-size: 14px; color: #FFEDD5; margin-bottom: 6px; }
+    .dark-box a { color: #FED7AA; }
+
+    /* ── BACK TO TOP ── */
+    .back-top {
+      display: block;
+      text-align: right;
+      font-size: 13px;
+      color: var(--accent);
+      text-decoration: none;
+      margin-top: 10px;
+    }
+    .back-top:hover { text-decoration: underline; }
+
+    /* ── FOOTER ── */
+    .page-footer {
+      background: var(--footer-bg);
+      color: var(--footer-text);
+      text-align: center;
+      padding: 30px 20px;
+      font-size: 13px;
+      margin-top: 48px;
+    }
+    .page-footer a { color: var(--accent-200); }
+    .page-footer a:hover { color: var(--accent); }
+
+    @media (max-width: 600px) {
+      .section { padding: 24px 20px; }
+      .toc ol { columns: 1; }
+      .contact-bar a { border-right: none; border-bottom: 1px solid rgba(255,255,255,0.2); width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── BANNER ── -->
+<div class="top-banner">
+  <div class="company">A2Z Business Administrators t/a BizUpKeep</div>
+  <h1>Terms &amp; Conditions</h1>
+  <p class="subtitle">Governing the use of our services in accordance with South African law</p>
+  <div class="meta-pills">
+    <span class="pill">📅 Effective Date: 3 July 2026</span>
+    <span class="pill">📄 Version 1.0</span>
+    <span class="pill">🇿🇦 South African Law</span>
+    <span class="pill">🏢 Reg No: 2017/182869/07</span>
+  </div>
+</div>
+
+<!-- ── CONTACT BAR ── -->
+<div class="contact-bar">
+  <a href="mailto:info@bizupkeep.co.za">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+    info@bizupkeep.co.za
+  </a>
+  <a href="mailto:billing@bizupkeep.co.za">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+    billing@bizupkeep.co.za
+  </a>
+  <a href="tel:0743499113">
+    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+    074 349 9113
+  </a>
+</div>
+
+<!-- ── PAGE CONTENT ── -->
+<div class="page-wrap">
+
+  <!-- TABLE OF CONTENTS -->
+  <nav class="toc" id="top">
+    <h2>Table of Contents</h2>
+    <ol>
+      <li><a href="#s1">Definitions and Interpretation</a></li>
+      <li><a href="#s2">Acceptance of Terms</a></li>
+      <li><a href="#s3">Our Services</a></li>
+      <li><a href="#s4">Client Obligations</a></li>
+      <li><a href="#s5">Fees, Payment &amp; Billing</a></li>
+      <li><a href="#s6">Refunds and Cancellations</a></li>
+      <li><a href="#s7">Turnaround Times and Delivery</a></li>
+      <li><a href="#s8">Intellectual Property</a></li>
+      <li><a href="#s9">Confidentiality</a></li>
+      <li><a href="#s10">Limitation of Liability</a></li>
+      <li><a href="#s11">Warranties and Disclaimers</a></li>
+      <li><a href="#s12">Indemnification</a></li>
+      <li><a href="#s13">Termination</a></li>
+      <li><a href="#s14">Governing Law and Disputes</a></li>
+      <li><a href="#s15">Changes to These Terms</a></li>
+      <li><a href="#s16">Contact Us</a></li>
+    </ol>
+  </nav>
+
+  <!-- INTRO NOTICE -->
+  <div class="warning-box" style="margin-top:28px;">
+    <strong>⚠️ Please read these Terms and Conditions carefully before using our services.</strong>
+    <p style="margin-top:6px; margin-bottom:0;">By accessing our website or engaging our services, you confirm that you have read, understood, and agreed to be bound by these Terms and Conditions in their entirety. If you do not agree, please do not use our services.</p>
+  </div>
+
+  <!-- 1. DEFINITIONS -->
+  <div class="section" id="s1">
+    <h2 class="section-title"><span class="section-num">1</span> Definitions and Interpretation</h2>
+    <p>In these Terms and Conditions, unless the context indicates otherwise, the following words and expressions shall have the meanings assigned to them below:</p>
+    <ul>
+      <li><strong>"A2Z" / "we" / "us" / "our"</strong> means A2Z Business Administrators (Registration No. 2017/182869/07), trading as BizUpKeep, the service provider.</li>
+      <li><strong>"Client" / "you" / "your"</strong> means any individual, company, or entity that engages A2Z for services or accesses our website.</li>
+      <li><strong>"Services"</strong> means all company registration, compliance, administrative, and related services offered by A2Z Business Administrators as described on our website.</li>
+      <li><strong>"Website"</strong> means the A2Z Business Administrators website and any associated web pages or platforms.</li>
+      <li><strong>"CIPC"</strong> means the Companies and Intellectual Property Commission of South Africa.</li>
+      <li><strong>"Application"</strong> means any service request, form, or submission made by the Client through our platform or by any other means.</li>
+      <li><strong>"Fee(s)"</strong> means the service charges payable by the Client for the Services as set out on our website or in a quotation.</li>
+      <li><strong>"Personal Information"</strong> has the meaning assigned to it in the Protection of Personal Information Act 4 of 2013 (POPIA).</li>
+      <li><strong>"Business Day"</strong> means any day other than a Saturday, Sunday, or South African public holiday.</li>
+      <li><strong>"CPA"</strong> means the Consumer Protection Act 68 of 2008.</li>
+      <li><strong>"Companies Act"</strong> means the Companies Act 71 of 2008.</li>
+    </ul>
+    <p>Words importing the singular shall include the plural and vice versa. Headings are for convenience only and shall not affect interpretation.</p>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 2. ACCEPTANCE -->
+  <div class="section" id="s2">
+    <h2 class="section-title"><span class="section-num">2</span> Acceptance of Terms</h2>
+    <p>By accessing our website, submitting an application, making payment, or otherwise engaging our services, you unconditionally accept and agree to be bound by these Terms and Conditions, together with our Privacy Policy and Refund Policy, all of which are incorporated herein by reference.</p>
+    <p>These Terms constitute a legally binding agreement between you and A2Z Business Administrators. If you are acting on behalf of a company or other legal entity, you represent and warrant that you have the authority to bind that entity to these Terms.</p>
+    <p>We reserve the right to update these Terms at any time. Continued use of our services following notification of any changes constitutes your acceptance of the revised Terms.</p>
+    <div class="info-box">
+      <strong>Age Requirement</strong>
+      <p>You must be 18 years of age or older to use our services. By accepting these Terms, you confirm that you meet this requirement.</p>
+    </div>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 3. SERVICES -->
+  <div class="section" id="s3">
+    <h2 class="section-title"><span class="section-num">3</span> Our Services</h2>
+    <p>A2Z Business Administrators provides online business administration and compliance services in South Africa. Our services include but are not limited to:</p>
+    <ul>
+      <li>Private company (Pty Ltd) registration with the CIPC</li>
+      <li>Non-profit company (NPC) registration</li>
+      <li>Business name reservation and approval</li>
+      <li>Amendment of company details (registered address, director changes, etc.)</li>
+      <li>Annual return filings with the CIPC</li>
+      <li>Memorandum of Incorporation (MOI) preparation and filing</li>
+      <li>Conversion of close corporations to companies</li>
+      <li>Related compliance and administrative services</li>
+    </ul>
+
+    <h3>3.1 Nature of Our Role</h3>
+    <p>A2Z Business Administrators acts as an <strong>intermediary and facilitator</strong> between the Client and regulatory bodies such as the CIPC. We do not provide legal, tax, accounting, or financial advice. Clients requiring such advice are encouraged to consult a qualified professional.</p>
+
+    <h3>3.2 Third-Party Dependencies</h3>
+    <p>Many of our services are dependent on the processing timelines, systems, and decisions of third-party bodies including the CIPC, SARS, and other government entities. We do not control and are not responsible for the actions, delays, or decisions of these third parties.</p>
+
+    <h3>3.3 Service Availability</h3>
+    <p>We endeavour to make our services available at all times; however, we do not guarantee uninterrupted access to our website or services. We reserve the right to suspend services for maintenance, upgrades, or other operational reasons without prior notice.</p>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 4. CLIENT OBLIGATIONS -->
+  <div class="section" id="s4">
+    <h2 class="section-title"><span class="section-num">4</span> Client Obligations</h2>
+    <p>By engaging our services, you agree to the following obligations:</p>
+
+    <h3>4.1 Accuracy of Information</h3>
+    <p>You warrant that all information, documents, and details provided to us are <strong>true, accurate, complete, and up to date</strong>. You acknowledge that we rely entirely on the information you provide to perform our services and submit documentation on your behalf.</p>
+    <div class="warning-box">
+      <strong>⚠️ Important:</strong> Providing false, fraudulent, or misleading information to the CIPC or any regulatory body is a criminal offence under South African law. A2Z Business Administrators accepts no liability for any consequences arising from inaccurate or fraudulent information submitted by the Client.
+    </div>
+
+    <h3>4.2 Timely Cooperation</h3>
+    <p>You agree to provide all required documents, information, and approvals within a reasonable time. Delays caused by late submission of information by the Client will not be the responsibility of A2Z Business Administrators and may affect delivery timelines.</p>
+
+    <h3>4.3 Document Requirements</h3>
+    <p>Where certified identity documents or other supporting documentation are required, you agree to provide copies that meet the requirements of the relevant regulatory body. Documents must be:</p>
+    <ul>
+      <li>Clear, legible, and unaltered</li>
+      <li>Certified by a commissioner of oaths, attorney, or other recognised authority where required</li>
+      <li>Valid and not expired</li>
+    </ul>
+
+    <h3>4.4 Lawful Use</h3>
+    <p>You warrant that you are engaging our services for lawful purposes only. You may not use our services to register a company or conduct activities that are illegal, fraudulent, or contrary to South African law.</p>
+
+    <h3>4.5 Contact Details</h3>
+    <p>You are responsible for maintaining accurate contact details with us and promptly notifying us of any changes to your email address, phone number, or other contact information.</p>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 5. FEES AND PAYMENT -->
+  <div class="section" id="s5">
+    <h2 class="section-title"><span class="section-num">5</span> Fees, Payment &amp; Billing</h2>
+
+    <h3>5.1 Service Fees</h3>
+    <p>All fees are displayed in South African Rand (ZAR) and are inclusive of VAT where applicable. Fees are as published on our website at the time of your order, or as set out in a written quotation provided to you.</p>
+
+    <h3>5.2 Payment Methods</h3>
+    <p>We accept the following payment methods:</p>
+    <ul>
+      <li><strong>Online payment</strong> via our secure payment gateway (Stripe) — credit and debit cards accepted</li>
+      <li><strong>EFT / Direct Bank Transfer</strong> — banking details will be provided upon request or at checkout</li>
+    </ul>
+
+    <h3>5.3 Payment Timing</h3>
+    <p>Payment is required <strong>in full and in advance</strong> before any service is commenced. We will not begin processing your application until full payment has been received and confirmed. In the case of EFT payments, processing will only begin once the funds reflect in our account.</p>
+
+    <h3>5.4 Government and Third-Party Fees</h3>
+    <p>Certain services require payment of government fees to the CIPC or other regulatory bodies. These fees are either included in our quoted price (where stated) or will be disclosed separately. A2Z Business Administrators is not responsible for any increase in government fees after a quotation has been issued.</p>
+
+    <h3>5.5 Late Payment</h3>
+    <p>Where payment is not received within the agreed timeframe, we reserve the right to suspend or cancel the service and may charge interest on overdue amounts at the rate prescribed by the Prescribed Rate of Interest Act 55 of 1975, as amended.</p>
+
+    <h3>5.6 Invoicing</h3>
+    <p>A tax invoice will be issued upon receipt of payment. All billing queries should be directed to <a href="mailto:billing@bizupkeep.co.za" style="color:var(--accent);">billing@bizupkeep.co.za</a>.</p>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 6. REFUNDS AND CANCELLATIONS -->
+  <div class="section" id="s6">
+    <h2 class="section-title"><span class="section-num">6</span> Refunds and Cancellations</h2>
+    <p>Our refund policy operates as follows and is subject to our full Refund Policy available on our website:</p>
+
+    <h3>6.1 Cancellation Before Processing</h3>
+    <p>If you cancel your order before we have commenced processing, you may be entitled to a refund less an administrative handling fee. Please contact us as soon as possible if you wish to cancel.</p>
+
+    <h3>6.2 Cancellation After Processing Has Commenced</h3>
+    <p>Once we have commenced work on your application — including preparing documents, submitting to the CIPC, or paying government fees on your behalf — cancellations may result in partial or no refund, depending on the stage of processing reached.</p>
+
+    <h3>6.3 CIPC Rejections</h3>
+    <p>If your application is rejected by the CIPC due to factors outside our control (e.g. a company name already being registered, failure to meet CIPC requirements due to inaccurate information provided by the Client), no refund will be issued for any government fees paid. Our service fee may be partially refunded at our discretion.</p>
+
+    <h3>6.4 Consumer Protection Act</h3>
+    <p>Where applicable, your rights under the Consumer Protection Act 68 of 2008 are not limited or excluded by this clause. If you are a consumer as defined under the CPA, you retain all rights afforded to you under that Act.</p>
+
+    <div class="info-box">
+      <strong>Refund Requests</strong>
+      <p>All refund requests must be submitted in writing to <a href="mailto:billing@bizupkeep.co.za">billing@bizupkeep.co.za</a>. Please include your order reference number and reason for the request. We will respond within 5 (five) Business Days.</p>
+    </div>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 7. TURNAROUND TIMES -->
+  <div class="section" id="s7">
+    <h2 class="section-title"><span class="section-num">7</span> Turnaround Times and Delivery</h2>
+    <p>Estimated turnaround times are provided as a guide only and are not guaranteed. Actual processing times are heavily dependent on CIPC processing queues, system availability, and the completeness of documentation submitted by the Client.</p>
+
+    <table class="price-table">
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Estimated Turnaround</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Company Name Reservation</td>
+          <td>1 – 5 Business Days</td>
+          <td>Subject to CIPC approval</td>
+        </tr>
+        <tr>
+          <td>Private Company (Pty Ltd) Registration</td>
+          <td>5 – 10 Business Days</td>
+          <td>Subject to CIPC processing times</td>
+        </tr>
+        <tr>
+          <td>Director / Member Amendments</td>
+          <td>3 – 7 Business Days</td>
+          <td>Requires certified ID documents</td>
+        </tr>
+        <tr>
+          <td>Annual Return Filing</td>
+          <td>1 – 3 Business Days</td>
+          <td>Once all information is received</td>
+        </tr>
+        <tr>
+          <td>Registered Address Change</td>
+          <td>2 – 5 Business Days</td>
+          <td>Subject to CIPC processing times</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="highlight-box" style="margin-top:16px;">
+      A2Z Business Administrators shall not be held liable for delays caused by CIPC system downtime, government processing backlogs, load-shedding, or any other circumstances beyond our reasonable control.
+    </div>
+
+    <p>Upon successful completion of your registration or service, documents and confirmation will be delivered to the email address provided in your application.</p>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 8. INTELLECTUAL PROPERTY -->
+  <div class="section" id="s8">
+    <h2 class="section-title"><span class="section-num">8</span> Intellectual Property</h2>
+    <p>All content on the A2Z Business Administrators website, including but not limited to text, graphics, logos, icons, images, software, and the overall design, is the property of A2Z Business Administrators or its content suppliers and is protected by applicable South African and international intellectual property laws.</p>
+    <p>You may not reproduce, duplicate, copy, sell, resell, or exploit any portion of our website or services without our express written consent.</p>
+    <p>Documents prepared on your behalf as part of our services (such as your MOI or company registration certificate) belong to you once payment has been made in full and the service has been completed. However, our templates, processes, and methodologies remain the intellectual property of A2Z Business Administrators.</p>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 9. CONFIDENTIALITY -->
+  <div class="section" id="s9">
+    <h2 class="section-title"><span class="section-num">9</span> Confidentiality</h2>
+    <p>We treat all personal and business information shared with us in the course of providing our services as strictly confidential. We will not disclose your confidential information to any third party except:</p>
+    <ul>
+      <li>Where required to do so by law or court order</li>
+      <li>To regulatory bodies such as the CIPC or SARS as necessary to perform our services</li>
+      <li>To our service providers who are bound by confidentiality obligations</li>
+      <li>With your prior written consent</li>
+    </ul>
+    <p>Our obligations regarding personal information are further governed by our <a href="privacy-policy" style="color:var(--accent);">Privacy Policy</a>, which forms part of these Terms.</p>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 10. LIMITATION OF LIABILITY -->
+  <div class="section" id="s10">
+    <h2 class="section-title"><span class="section-num">10</span> Limitation of Liability</h2>
+    <p>To the maximum extent permitted by applicable South African law, including the Consumer Protection Act 68 of 2008:</p>
+
+    <h3>10.1 Exclusion of Indirect Damages</h3>
+    <p>A2Z Business Administrators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, loss of revenue, loss of data, or loss of business opportunity, arising out of or in connection with your use of our services.</p>
+
+    <h3>10.2 Limitation of Direct Liability</h3>
+    <p>Our total aggregate liability to you for any claim arising out of or in connection with these Terms or our services shall not exceed the total amount of fees paid by you to A2Z Business Administrators in respect of the specific service giving rise to the claim.</p>
+
+    <h3>10.3 Third-Party Actions</h3>
+    <p>We accept no liability for the actions, decisions, delays, errors, or omissions of the CIPC, SARS, or any other government body or third-party service provider involved in the processing of your application.</p>
+
+    <h3>10.4 Client-Provided Information</h3>
+    <p>We accept no liability for any loss, damage, penalty, fine, or legal consequence arising from inaccurate, false, incomplete, or fraudulent information provided by the Client.</p>
+
+    <div class="warning-box">
+      <strong>Note:</strong> Nothing in these Terms excludes or limits liability for fraud, gross negligence, or wilful misconduct on the part of A2Z Business Administrators, or any liability that cannot be lawfully excluded under the Consumer Protection Act or any other applicable legislation.
+    </div>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 11. WARRANTIES AND DISCLAIMERS -->
+  <div class="section" id="s11">
+    <h2 class="section-title"><span class="section-num">11</span> Warranties and Disclaimers</h2>
+
+    <h3>11.1 No Guarantee of Outcome</h3>
+    <p>While we will use reasonable skill and care in performing our services, we do not guarantee the success of any application, registration, or filing submitted to a third-party body. Approval is at the sole discretion of the relevant regulatory authority.</p>
+
+    <h3>11.2 No Legal Advice</h3>
+    <p>Nothing on our website or in communications from A2Z Business Administrators constitutes legal, tax, accounting, or financial advice. Our services are administrative in nature. You are strongly encouraged to seek independent professional advice where required.</p>
+
+    <h3>11.3 Website Accuracy</h3>
+    <p>We endeavour to ensure that all information published on our website is accurate and up to date. However, we do not warrant the completeness, accuracy, or suitability of any information on our website and disclaim all liability for any reliance placed on such information.</p>
+
+    <h3>11.4 Website Availability</h3>
+    <p>Our website and online services are provided on an "as is" and "as available" basis. We do not warrant that the website will be uninterrupted, error-free, or free from viruses or other harmful components.</p>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 12. INDEMNIFICATION -->
+  <div class="section" id="s12">
+    <h2 class="section-title"><span class="section-num">12</span> Indemnification</h2>
+    <p>You agree to indemnify, defend, and hold harmless A2Z Business Administrators, its directors, employees, agents, and service providers from and against any claims, damages, losses, penalties, fines, costs, and expenses (including reasonable legal fees) arising out of or in connection with:</p>
+    <ul>
+      <li>Your use or misuse of our services or website</li>
+      <li>Any breach of these Terms and Conditions by you</li>
+      <li>The provision of false, inaccurate, or misleading information by you</li>
+      <li>Any violation of applicable law or regulation by you</li>
+      <li>Any third-party claim arising from your actions or omissions</li>
+    </ul>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 13. TERMINATION -->
+  <div class="section" id="s13">
+    <h2 class="section-title"><span class="section-num">13</span> Termination</h2>
+
+    <h3>13.1 Termination by the Client</h3>
+    <p>You may terminate your engagement with A2Z Business Administrators at any time by giving us written notice. Termination does not entitle you to a refund of fees already paid where services have been commenced. Please refer to our Refund Policy for further details.</p>
+
+    <h3>13.2 Termination by A2Z Business Administrators</h3>
+    <p>We reserve the right to refuse, suspend, or terminate our services to you, with immediate effect and without liability, if:</p>
+    <ul>
+      <li>You breach any provision of these Terms and Conditions</li>
+      <li>You provide false or fraudulent information</li>
+      <li>You fail to make payment when due</li>
+      <li>We reasonably believe that your use of our services is unlawful or exposes us to legal risk</li>
+      <li>You engage in abusive, threatening, or inappropriate conduct toward our staff</li>
+    </ul>
+
+    <h3>13.3 Effect of Termination</h3>
+    <p>Upon termination, any outstanding fees become immediately payable. Clauses that by their nature should survive termination (including confidentiality, intellectual property, limitation of liability, and governing law) shall continue to apply.</p>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 14. GOVERNING LAW -->
+  <div class="section" id="s14">
+    <h2 class="section-title"><span class="section-num">14</span> Governing Law and Disputes</h2>
+
+    <h3>14.1 Governing Law</h3>
+    <p>These Terms and Conditions are governed by and construed in accordance with the laws of the Republic of South Africa. Any applicable consumer rights under the Consumer Protection Act 68 of 2008 are preserved and not limited by these Terms.</p>
+
+    <h3>14.2 Dispute Resolution</h3>
+    <p>In the event of any dispute, claim, or controversy arising out of or relating to these Terms or our services, the parties agree to first attempt to resolve the dispute through good faith negotiation. Either party may initiate this process by giving written notice to the other party detailing the nature of the dispute.</p>
+    <p>If the dispute is not resolved within 20 (twenty) Business Days of such notice (or such longer period as the parties may agree in writing), either party may refer the matter to mediation before a mutually agreed mediator.</p>
+    <p>If mediation fails, the dispute shall be submitted to the jurisdiction of the South African courts.</p>
+
+    <h3>14.3 Jurisdiction</h3>
+    <p>You consent to the non-exclusive jurisdiction of the South African courts in respect of any proceedings arising out of or in connection with these Terms.</p>
+
+    <h3>14.4 Consumer Complaints</h3>
+    <p>If you are a consumer and are dissatisfied with our services or the handling of a dispute, you may also contact the National Consumer Commission (NCC) or approach the Consumer Goods and Services Ombud (CGSO).</p>
+
+    <div class="dark-box">
+      <strong>National Consumer Commission (NCC)</strong>
+      <p>🌐 Website: <a href="https://www.thencc.gov.za" target="_blank" rel="noopener">www.thencc.gov.za</a></p>
+      <p>📞 Toll-free: 0860 266 786</p>
+      <p>📧 Email: <a href="mailto:complaints@thencc.gov.za">complaints@thencc.gov.za</a></p>
+    </div>
+
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 15. CHANGES TO TERMS -->
+  <div class="section" id="s15">
+    <h2 class="section-title"><span class="section-num">15</span> Changes to These Terms</h2>
+    <p>We reserve the right to amend, update, or replace these Terms and Conditions at any time. The updated Terms will be published on our website with a revised effective date. Where changes are material, we will endeavour to notify registered clients via email.</p>
+    <p>Your continued use of our services following the publication of updated Terms constitutes your acceptance of the revised Terms. If you do not agree to the updated Terms, you must discontinue use of our services.</p>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+  <!-- 16. CONTACT US -->
+  <div class="section" id="s16">
+    <h2 class="section-title"><span class="section-num">16</span> Contact Us</h2>
+    <p>If you have any questions, concerns, or complaints regarding these Terms and Conditions, please contact us:</p>
+
+    <div class="info-box" style="margin-top:16px;">
+      <strong>A2Z Business Administrators</strong>
+      <p>📧 General Enquiries: <a href="mailto:info@bizupkeep.co.za">info@bizupkeep.co.za</a></p>
+      <p>📧 Billing: <a href="mailto:billing@bizupkeep.co.za">billing@bizupkeep.co.za</a></p>
+      <p>📞 Telephone: <a href="tel:0743499113">074 349 9113</a></p>
+    </div>
+
+    <p style="margin-top:16px;">We aim to respond to all written enquiries within 3 (three) Business Days.</p>
+    <a href="#top" class="back-top">↑ Back to top</a>
+  </div>
+
+</div><!-- end .page-wrap -->
+
+<!-- ── PAGE FOOTER ── -->
+<footer class="page-footer">
+  <p>&copy; 2026 A2Z Business Administrators t/a BizUpKeep (Reg. No. 2017/182869/07). All rights reserved.</p>
+  <p style="margin-top:6px;">These Terms &amp; Conditions were last updated on 3 July 2026. | <a href="mailto:info@bizupkeep.co.za">info@bizupkeep.co.za</a></p>
+</footer>
+
+</body>
+</html>
