@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.19.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.20.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -830,7 +830,7 @@ function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $note
 		return false;
 	}
 
-	$company = bizupkeep_child_resolve_company_for_submission( $wp_user_id, 'amendment' );
+	$company = bizupkeep_child_resolve_company_for_submission( $wp_user_id, 'amendment', true );
 
 	if ( null === $company ) {
 		return false;
@@ -965,8 +965,11 @@ function bizupkeep_child_submit_annual_return( int $wp_user_id, string $notes ):
  * all yet (from "{$prefix}_new_company[...]"). Returns null on any
  * failure, per the same public-form-submission convention every other
  * submit helper in this file uses.
+ *
+ * $require_directors is passed straight through to
+ * bizupkeep_child_create_external_company() - see its docblock.
  */
-function bizupkeep_child_resolve_company_for_submission( int $wp_user_id, string $prefix ): ?Company {
+function bizupkeep_child_resolve_company_for_submission( int $wp_user_id, string $prefix, bool $require_directors = false ): ?Company {
 	$mode = isset( $_POST[ "{$prefix}_company_mode" ] ) ? sanitize_text_field( wp_unslash( $_POST[ "{$prefix}_company_mode" ] ) ) : 'existing';
 
 	if ( 'new' === $mode ) {
@@ -974,7 +977,7 @@ function bizupkeep_child_resolve_company_for_submission( int $wp_user_id, string
 			? $_POST[ "{$prefix}_new_company" ]
 			: array();
 
-		return bizupkeep_child_create_external_company( $wp_user_id, $raw );
+		return bizupkeep_child_create_external_company( $wp_user_id, $raw, $require_directors );
 	}
 
 	$company_uuid = isset( $_POST[ "{$prefix}_company_uuid" ] ) ? sanitize_text_field( wp_unslash( $_POST[ "{$prefix}_company_uuid" ] ) ) : '';
@@ -996,9 +999,19 @@ function bizupkeep_child_resolve_company_for_submission( int $wp_user_id, string
  * the account (shows up in the "existing company" picker for future
  * applications, etc.).
  *
+ * $require_directors (Company Amendment only) parses $raw['director']
+ * the same way bizupkeep_child_submit_new_registration() parses its
+ * own director repeater, and fails the whole submission if none were
+ * given - mirroring that function's "at least one director required"
+ * rule, since without directors here the company gets created with
+ * none on file and bizupkeep_child_render_poa_document() has no one
+ * to list as needing to sign. Annual Return's "not registered with
+ * us" branch never collects directors (no POA involved), so it
+ * leaves this false and $raw['director'] is simply never present.
+ *
  * @param array<string,mixed> $raw
  */
-function bizupkeep_child_create_external_company( int $wp_user_id, array $raw ): ?Company {
+function bizupkeep_child_create_external_company( int $wp_user_id, array $raw, bool $require_directors = false ): ?Company {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
 		return null;
 	}
@@ -1017,6 +1030,18 @@ function bizupkeep_child_create_external_company( int $wp_user_id, array $raw ):
 
 	if ( '' === trim( $address->addressLine1 ) || '' === trim( $address->city ) || '' === trim( $address->postalCode ) ) {
 		return null;
+	}
+
+	$directors = isset( $raw['director'] ) && is_array( $raw['director'] )
+		? bizupkeep_child_parse_directors_input( $raw['director'] )
+		: array();
+
+	if ( $require_directors && array() === $directors ) {
+		return null;
+	}
+
+	if ( count( $directors ) > 10 ) {
+		$directors = array_slice( $directors, 0, 10 );
 	}
 
 	$clients = bizhub()->container()->get( ClientServiceInterface::class );
@@ -1044,7 +1069,8 @@ function bizupkeep_child_create_external_company( int $wp_user_id, array $raw ):
 				$company_name,
 				__( 'Private Company (Pty) Ltd', 'bizupkeep-astra-child' ),
 				CompanyStatus::ACTIVE,
-				$address
+				$address,
+				$directors
 			)
 		);
 	} catch ( \Throwable $e ) {
@@ -1362,9 +1388,22 @@ function bizupkeep_child_render_address_fields( string $prefix ): void {
  * bizupkeep_child_resolve_company_for_submission() reads back out of
  * $_POST on submit.
  *
+ * $include_directors (Company Amendment only - Annual Return has no
+ * Power of Attorney and doesn't need this) adds a "Current Directors"
+ * repeater to the "not registered with us" branch, collected up front
+ * alongside the company's identity rather than behind the "Director
+ * Amendment" checkbox: a company created via this branch otherwise
+ * has zero directors on file, whatever amendment type(s) get picked,
+ * since bizupkeep_child_render_poa_document() reads the company's
+ * *current* directors (the people who actually need to sign the
+ * POA) - not the "Director Amendment" section's proposed add/remove
+ * changes, which are just workflow metadata pending staff review, not
+ * yet-real people. See bizupkeep_child_create_external_company(),
+ * which is what actually attaches these to the new Company record.
+ *
  * @param array<int,array{uuid:string,name:string,directors:array<int,array{uuid:string,full_name:string}>}> $companies
  */
-function bizupkeep_child_render_company_picker( string $prefix, array $companies ): void {
+function bizupkeep_child_render_company_picker( string $prefix, array $companies, bool $include_directors = false ): void {
 	$has_companies = array() !== $companies;
 	?>
 	<label class="bizupkeep-type-option">
@@ -1419,6 +1458,22 @@ function bizupkeep_child_render_company_picker( string $prefix, array $companies
 		</p>
 		<h3><?php esc_html_e( 'Registered Address', 'bizupkeep-astra-child' ); ?></h3>
 		<?php bizupkeep_child_render_address_fields( "{$prefix}_new_company[address]" ); ?>
+
+		<?php if ( $include_directors ) : ?>
+			<h3><?php esc_html_e( 'Current Directors', 'bizupkeep-astra-child' ); ?></h3>
+			<p class="bizupkeep-field-hint"><?php esc_html_e( "We need this now, not just for a Director Amendment - these are the people who'll need to sign the Power of Attorney, whatever you're changing.", 'bizupkeep-astra-child' ); ?></p>
+
+			<div class="bizupkeep-repeater" data-repeater="<?php echo esc_attr( $prefix ); ?>-new-company-director" data-max="10" data-template-id="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-company-director-template">
+				<div class="bizupkeep-repeater-blocks">
+					<?php bizupkeep_child_render_director_fields( "{$prefix}_new_company[director]", 0 ); ?>
+				</div>
+				<button type="button" class="bizupkeep-btn bizupkeep-repeater-add"><?php esc_html_e( '+ Add Director', 'bizupkeep-astra-child' ); ?></button>
+			</div>
+
+			<template id="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-company-director-template">
+				<?php bizupkeep_child_render_director_fields( "{$prefix}_new_company[director]", '__INDEX__' ); ?>
+			</template>
+		<?php endif; ?>
 	</div>
 	<?php
 }

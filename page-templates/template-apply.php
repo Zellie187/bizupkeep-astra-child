@@ -133,7 +133,7 @@ get_header();
 
 					<h2><?php esc_html_e( 'Which Company?', 'bizupkeep-astra-child' ); ?></h2>
 
-					<?php bizupkeep_child_render_company_picker( 'amendment', $companies ); ?>
+					<?php bizupkeep_child_render_company_picker( 'amendment', $companies, true ); ?>
 
 					<h2><?php esc_html_e( 'What Would You Like to Change?', 'bizupkeep-astra-child' ); ?></h2>
 
