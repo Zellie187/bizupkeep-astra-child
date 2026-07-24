@@ -8,15 +8,17 @@ use BizUpKeep\Tests\E2E\Support\E2ETestCase;
 
 /**
  * Covers the Company Amendment "Pay Now" flow end to end over real
- * HTTP: submit an amendment, upload both required documents (which
+ * HTTP: submit an amendment, upload all four required documents (which
  * auto-chains verify_documents -> request_payment, landing the
  * workflow at AwaitingPayment - see
- * bizupkeep_child_maybe_verify_documents()), then follow the payment
- * link and confirm it lands on a real WooCommerce checkout with the
- * ONE product matching this amendment's exact amendment_types - the
- * fix for the pricing gap the user asked about directly (a client
- * bundling several change types could otherwise pick any product,
- * with no connection to what was actually requested).
+ * bizupkeep_child_maybe_verify_documents()/
+ * bizupkeep_child_required_document_categories()), then follow the
+ * payment link and confirm it lands on a real WooCommerce checkout
+ * with the ONE product matching this amendment's exact
+ * amendment_types - the fix for the pricing gap the user asked about
+ * directly (a client bundling several change types could otherwise
+ * pick any product, with no connection to what was actually
+ * requested).
  */
 final class PaymentFlowTest extends E2ETestCase
 {
@@ -24,20 +26,30 @@ final class PaymentFlowTest extends E2ETestCase
 
     private string $signedPoaPath;
 
+    private string $signedResolutionPath;
+
+    private string $signedMinutesPath;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->idDocumentPath = tempnam(sys_get_temp_dir(), 'bizupkeep-e2e-id-') . '.pdf';
         $this->signedPoaPath = tempnam(sys_get_temp_dir(), 'bizupkeep-e2e-poa-') . '.pdf';
+        $this->signedResolutionPath = tempnam(sys_get_temp_dir(), 'bizupkeep-e2e-resolution-') . '.pdf';
+        $this->signedMinutesPath = tempnam(sys_get_temp_dir(), 'bizupkeep-e2e-minutes-') . '.pdf';
         file_put_contents($this->idDocumentPath, "%PDF-1.4\n% E2E ID document fixture\n");
         file_put_contents($this->signedPoaPath, "%PDF-1.4\n% E2E signed POA fixture\n");
+        file_put_contents($this->signedResolutionPath, "%PDF-1.4\n% E2E signed resolution fixture\n");
+        file_put_contents($this->signedMinutesPath, "%PDF-1.4\n% E2E signed minutes fixture\n");
     }
 
     protected function tearDown(): void
     {
         @unlink($this->idDocumentPath);
         @unlink($this->signedPoaPath);
+        @unlink($this->signedResolutionPath);
+        @unlink($this->signedMinutesPath);
 
         parent::tearDown();
     }
@@ -69,7 +81,7 @@ final class PaymentFlowTest extends E2ETestCase
     }
 
     /**
-     * Submit an address-only amendment and upload both required
+     * Submit an address-only amendment and upload all four required
      * documents, mirroring the real client journey through to
      * AwaitingPayment. Returns the workflow UUID.
      */
@@ -91,6 +103,9 @@ final class PaymentFlowTest extends E2ETestCase
                     'address_line_1' => '1 Original Address Street',
                     'city' => 'Cape Town',
                     'postal_code' => '8001',
+                ],
+                'director' => [
+                    ['first_name' => 'E2E', 'last_name' => 'Tester', 'id_number' => '9001015800086'],
                 ],
             ],
             'amendment_types' => ['address'],
@@ -138,6 +153,32 @@ final class PaymentFlowTest extends E2ETestCase
             ['document' => $this->signedPoaPath]
         );
 
+        $documentsPage = $this->http->get('/client-portal/client-portal-documents/');
+        $uploadNonce = $documentsPage->nonce('bizupkeep_upload_nonce');
+
+        $this->http->post(
+            '/client-portal/client-portal-documents/',
+            [
+                'bizupkeep_upload_nonce' => $uploadNonce,
+                'workflow_uuid' => $workflow['uuid'],
+                'category' => 'signed_resolution',
+            ],
+            ['document' => $this->signedResolutionPath]
+        );
+
+        $documentsPage = $this->http->get('/client-portal/client-portal-documents/');
+        $uploadNonce = $documentsPage->nonce('bizupkeep_upload_nonce');
+
+        $this->http->post(
+            '/client-portal/client-portal-documents/',
+            [
+                'bizupkeep_upload_nonce' => $uploadNonce,
+                'workflow_uuid' => $workflow['uuid'],
+                'category' => 'signed_minutes',
+            ],
+            ['document' => $this->signedMinutesPath]
+        );
+
         $updated = $this->db->fetchOne(
             'SELECT * FROM ' . $this->db->table('bizhub_workflow_instances') . ' WHERE uuid = ?',
             [$workflow['uuid']]
@@ -146,7 +187,7 @@ final class PaymentFlowTest extends E2ETestCase
         self::assertSame(
             'awaiting_payment',
             $updated['status'],
-            'Uploading both required documents should auto-advance to AwaitingPayment.'
+            'Uploading all four required documents should auto-advance to AwaitingPayment.'
         );
 
         return $workflow['uuid'];

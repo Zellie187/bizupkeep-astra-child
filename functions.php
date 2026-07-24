@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.20.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.21.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -1583,7 +1583,36 @@ const BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES = array(
 	DocumentCategory::SIGNED_POA,
 );
 
+/**
+ * Company Amendment additionally requires a signed Resolution Letter
+ * and Minutes of Meeting (see bizupkeep_child_render_resolution_document()/
+ * bizupkeep_child_render_minutes_document()) - a board resolution
+ * recording the directors' decision to make the specific change(s)
+ * being applied for, which Company Registration has no equivalent of
+ * (there's no existing board to resolve anything - the company doesn't
+ * exist yet).
+ */
+const BIZUPKEEP_AMENDMENT_ADDITIONAL_REQUIRED_DOCUMENT_CATEGORIES = array(
+	DocumentCategory::SIGNED_RESOLUTION,
+	DocumentCategory::SIGNED_MINUTES,
+);
+
 const BIZUPKEEP_MAX_DOCUMENT_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB.
+
+/**
+ * The document categories a workflow instance must have on file before
+ * bizupkeep_child_maybe_verify_documents() will advance it out of
+ * PendingDocuments - see BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES/
+ * BIZUPKEEP_AMENDMENT_ADDITIONAL_REQUIRED_DOCUMENT_CATEGORIES for why
+ * Company Amendment's set is larger than Company Registration's.
+ *
+ * @return DocumentCategory[]
+ */
+function bizupkeep_child_required_document_categories( string $workflow_type ): array {
+	return CompanyAmendmentDefinition::TYPE === $workflow_type
+		? array_merge( BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES, BIZUPKEEP_AMENDMENT_ADDITIONAL_REQUIRED_DOCUMENT_CATEGORIES )
+		: BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES;
+}
 
 add_action( 'template_redirect', 'bizupkeep_child_handle_document_upload' );
 
@@ -1652,11 +1681,19 @@ function bizupkeep_child_process_document_upload( int $wp_user_id, string $workf
 		return false;
 	}
 
-	// Only these two categories are collected on this form - reject
+	// Only these categories are collected on this form - reject
 	// anything else rather than trusting the posted value blindly.
+	// Signed Resolution/Minutes only apply to Company Amendment (see
+	// BIZUPKEEP_AMENDMENT_ADDITIONAL_REQUIRED_DOCUMENT_CATEGORIES), but
+	// are allowed here regardless of workflow type - harmless if a
+	// Registration application never ends up needing them, since
+	// bizupkeep_child_required_document_categories() is what actually
+	// decides whether a workflow can advance.
 	$allowed_categories = array(
 		'id_document' => DocumentCategory::ID_DOCUMENT,
 		'signed_poa' => DocumentCategory::SIGNED_POA,
+		'signed_resolution' => DocumentCategory::SIGNED_RESOLUTION,
+		'signed_minutes' => DocumentCategory::SIGNED_MINUTES,
 	);
 
 	if ( ! isset( $allowed_categories[ $category_raw ] ) ) {
@@ -1873,9 +1910,11 @@ function bizupkeep_child_workflow_type_label( string $workflow_type ): string {
 }
 
 /**
- * If a specific application now has both required document categories
- * uploaded, advance it from PendingDocuments to DocumentsVerified (and
- * on to AwaitingPayment, since request_payment has no guard for either
+ * If a specific application now has every required document category
+ * uploaded (see bizupkeep_child_required_document_categories() - a
+ * larger set for Company Amendment than Company Registration), advance
+ * it from PendingDocuments to DocumentsVerified (and on to
+ * AwaitingPayment, since request_payment has no guard for either
  * Company Registration or Company Amendment - see
  * CompanyRegistrationGuard/CompanyAmendmentGuard, which only have
  * explicit cases for verify_documents/confirm_payment/approve). Safe
@@ -1903,7 +1942,7 @@ function bizupkeep_child_maybe_verify_documents( WorkflowInstance $workflow, int
 		$uploaded
 	);
 
-	foreach ( BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES as $required ) {
+	foreach ( bizupkeep_child_required_document_categories( $workflow->getWorkflowType() ) as $required ) {
 		if ( ! in_array( $required, $categories, true ) ) {
 			return;
 		}
@@ -2036,33 +2075,20 @@ function bizupkeep_child_handle_poa_request(): void {
 		exit;
 	}
 
-	$wp_user_id    = get_current_user_id();
 	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_poa'] ) );
+	$result        = bizupkeep_child_resolve_generated_document_request(
+		$workflow_uuid,
+		array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE )
+	);
 
-	$workflow = bizupkeep_child_get_owned_workflow_instance( $wp_user_id, $workflow_uuid );
-
-	if ( null === $workflow || ! in_array(
-		$workflow->getWorkflowType(),
-		array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ),
-		true
-	) ) {
-		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
-	}
-
-	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
-		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
-	}
-
-	try {
-		$company = bizhub()->container()->get( CompanyServiceInterface::class )->getCompany( $workflow->getSubjectUuid() );
-	} catch ( \Throwable $e ) {
+	if ( null === $result ) {
 		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
 	}
 
 	nocache_headers();
 	header( 'Content-Type: text/html; charset=utf-8' );
 
-	echo bizupkeep_child_render_poa_document( $workflow, $company ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- the function returns a complete, self-escaping HTML document.
+	echo bizupkeep_child_render_poa_document( $result['workflow'], $result['company'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- the function returns a complete, self-escaping HTML document.
 
 	exit;
 }
@@ -2194,6 +2220,508 @@ function bizupkeep_child_render_poa_document( WorkflowInstance $workflow, Compan
 </html>
 	<?php
 	return (string) ob_get_clean();
+}
+
+/**
+ * Format a posted "new_address"/"new_company[address]" metadata array
+ * (the AddressData::toArray() shape) into the same comma-joined
+ * single-line format RegisteredAddress::getFormattedAddress() uses for
+ * a company's *current* address, so old and new addresses read
+ * consistently side by side in generated documents.
+ *
+ * @param array<string,mixed> $address
+ */
+function bizupkeep_child_format_address_array( array $address ): string {
+	$parts = array_filter(
+		array(
+			(string) ( $address['address_line_1'] ?? '' ),
+			(string) ( $address['address_line_2'] ?? '' ),
+			(string) ( $address['suburb'] ?? '' ),
+			(string) ( $address['city'] ?? '' ),
+			(string) ( $address['province'] ?? '' ),
+			(string) ( $address['postal_code'] ?? '' ),
+			'South Africa',
+		)
+	);
+
+	return implode( ', ', $parts );
+}
+
+/**
+ * Build a plain-text (not yet escaped - callers esc_html() each line)
+ * description of every change a Company Amendment application is
+ * making, one line per change, for the Resolution Letter and Minutes
+ * of Meeting documents - both need exactly the same content, just
+ * wrapped in a different document shell. Name/address changes read
+ * "from X to Y"; director changes deliberately list only full name and
+ * ID/passport number (nothing else), per how the client asked for
+ * these documents to read.
+ *
+ * A "remove" director_changes entry only carries a name and UUID (see
+ * bizupkeep_child_parse_director_changes()) - its ID/passport number
+ * is looked up fresh here from the still-current Director record,
+ * since the removal hasn't taken effect yet.
+ *
+ * @return string[]
+ */
+function bizupkeep_child_amendment_change_lines( WorkflowInstance $workflow, Company $company ): array {
+	$metadata         = $workflow->getMetadata();
+	$amendment_types  = isset( $metadata['amendment_types'] ) && is_array( $metadata['amendment_types'] ) ? $metadata['amendment_types'] : array();
+	$lines            = array();
+
+	if ( in_array( CompanyAmendmentDefinition::AMENDMENT_TYPE_NAME, $amendment_types, true ) ) {
+		$proposed_names = isset( $metadata['proposed_names'] ) && is_array( $metadata['proposed_names'] ) ? $metadata['proposed_names'] : array();
+		$new_name       = $proposed_names[0] ?? '';
+
+		$lines[] = sprintf(
+			/* translators: 1: current company name, 2: proposed new name */
+			__( 'The name of the Company be changed from "%1$s" to "%2$s".', 'bizupkeep-astra-child' ),
+			$company->getCompanyName(),
+			$new_name
+		);
+
+		$alternates = array_slice( $proposed_names, 1 );
+
+		if ( array() !== $alternates ) {
+			$lines[] = sprintf(
+				/* translators: %s: comma-separated list of alternative proposed names */
+				__( 'Should the above name not be available, the following alternative(s) are proposed, in order of preference: %s.', 'bizupkeep-astra-child' ),
+				implode( ', ', $alternates )
+			);
+		}
+	}
+
+	if ( in_array( CompanyAmendmentDefinition::AMENDMENT_TYPE_ADDRESS, $amendment_types, true ) ) {
+		$new_address = isset( $metadata['new_address'] ) && is_array( $metadata['new_address'] ) ? $metadata['new_address'] : array();
+
+		$lines[] = sprintf(
+			/* translators: 1: current registered address, 2: new registered address */
+			__( 'The registered address of the Company be changed from %1$s to %2$s.', 'bizupkeep-astra-child' ),
+			$company->getRegisteredAddress()->getFormattedAddress(),
+			bizupkeep_child_format_address_array( $new_address )
+		);
+	}
+
+	if ( in_array( CompanyAmendmentDefinition::AMENDMENT_TYPE_DIRECTOR, $amendment_types, true ) ) {
+		$director_changes = isset( $metadata['director_changes'] ) && is_array( $metadata['director_changes'] ) ? $metadata['director_changes'] : array();
+		$appointed        = array();
+		$resigning        = array();
+		$director_repo    = null;
+
+		foreach ( $director_changes as $change ) {
+			if ( ! is_array( $change ) ) {
+				continue;
+			}
+
+			if ( 'add' === ( $change['action'] ?? '' ) ) {
+				$id_number = (string) ( $change['id_number'] ?? $change['passport_number'] ?? '' );
+				$full_name = trim( ( $change['first_name'] ?? '' ) . ' ' . ( $change['last_name'] ?? '' ) );
+				$appointed[] = '' !== $id_number
+					? sprintf( '%1$s (ID: %2$s)', $full_name, $id_number )
+					: $full_name;
+			} elseif ( 'remove' === ( $change['action'] ?? '' ) ) {
+				if ( null === $director_repo && function_exists( 'bizhub' ) && null !== bizhub() ) {
+					$director_repo = bizhub()->container()->get( DirectorRepositoryInterface::class );
+				}
+
+				$id_number = '';
+
+				if ( null !== $director_repo && isset( $change['uuid'] ) ) {
+					$director  = $director_repo->findByUuid( (string) $change['uuid'] );
+					$id_number = null !== $director ? (string) ( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' ) : '';
+				}
+
+				$full_name   = (string) ( $change['name'] ?? '' );
+				$resigning[] = '' !== $id_number
+					? sprintf( '%1$s (ID: %2$s)', $full_name, $id_number )
+					: $full_name;
+			}
+		}
+
+		if ( array() !== $appointed ) {
+			$lines[] = sprintf(
+				/* translators: %s: semicolon-separated list of "Full Name (ID: ...)" */
+				__( 'The following director(s) be appointed: %s.', 'bizupkeep-astra-child' ),
+				implode( '; ', $appointed )
+			);
+		}
+
+		if ( array() !== $resigning ) {
+			$lines[] = sprintf(
+				/* translators: %s: semicolon-separated list of "Full Name (ID: ...)" */
+				__( 'The following director(s) resign as director(s) of the Company: %s.', 'bizupkeep-astra-child' ),
+				implode( '; ', $resigning )
+			);
+		}
+	}
+
+	return $lines;
+}
+
+/**
+ * Resolve and ownership-verify a generated-document request's workflow
+ * UUID into its WorkflowInstance + owning Company - the shared check
+ * bizupkeep_child_handle_poa_request()/bizupkeep_child_handle_resolution_request()/
+ * bizupkeep_child_handle_minutes_request() each otherwise repeat.
+ * Returns null if the workflow doesn't exist, isn't owned by the
+ * current user, isn't one of $allowed_types, or BizHub isn't
+ * available - any of which the caller treats as wp_die().
+ *
+ * @param array<int,string> $allowed_types
+ * @return array{workflow:WorkflowInstance,company:Company}|null
+ */
+function bizupkeep_child_resolve_generated_document_request( string $workflow_uuid, array $allowed_types ): ?array {
+	$workflow = bizupkeep_child_get_owned_workflow_instance( get_current_user_id(), $workflow_uuid );
+
+	if ( null === $workflow || ! in_array( $workflow->getWorkflowType(), $allowed_types, true ) ) {
+		return null;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return null;
+	}
+
+	try {
+		$company = bizhub()->container()->get( CompanyServiceInterface::class )->getCompany( $workflow->getSubjectUuid() );
+	} catch ( \Throwable $e ) {
+		return null;
+	}
+
+	return array(
+		'workflow' => $workflow,
+		'company'  => $company,
+	);
+}
+
+/**
+ * The URL that streams a Company Amendment's generated Resolution
+ * Letter - see bizupkeep_child_handle_resolution_request().
+ */
+function bizupkeep_child_resolution_url( string $workflow_uuid ): string {
+	return add_query_arg( 'bizupkeep_resolution', $workflow_uuid, home_url( '/client-portal/client-portal-applications/' ) );
+}
+
+/**
+ * The URL that streams a Company Amendment's generated Minutes of
+ * Meeting - see bizupkeep_child_handle_minutes_request().
+ */
+function bizupkeep_child_minutes_url( string $workflow_uuid ): string {
+	return add_query_arg( 'bizupkeep_minutes', $workflow_uuid, home_url( '/client-portal/client-portal-applications/' ) );
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_resolution_request' );
+
+/**
+ * Stream a Company Amendment's generated Resolution Letter as a
+ * standalone, print-styled HTML document - same "intercept early on
+ * template_redirect, bypass the theme" approach as
+ * bizupkeep_child_handle_poa_request().
+ */
+function bizupkeep_child_handle_resolution_request(): void {
+	if ( ! isset( $_GET['bizupkeep_resolution'] ) ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( home_url( '/client-portal/client-portal-applications/' ) ) );
+		exit;
+	}
+
+	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_resolution'] ) );
+	$result        = bizupkeep_child_resolve_generated_document_request( $workflow_uuid, array( CompanyAmendmentDefinition::TYPE ) );
+
+	if ( null === $result ) {
+		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
+	}
+
+	nocache_headers();
+	header( 'Content-Type: text/html; charset=utf-8' );
+
+	echo bizupkeep_child_render_resolution_document( $result['workflow'], $result['company'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- the function returns a complete, self-escaping HTML document.
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_minutes_request' );
+
+/**
+ * Stream a Company Amendment's generated Minutes of Meeting as a
+ * standalone, print-styled HTML document - same "intercept early on
+ * template_redirect, bypass the theme" approach as
+ * bizupkeep_child_handle_poa_request().
+ */
+function bizupkeep_child_handle_minutes_request(): void {
+	if ( ! isset( $_GET['bizupkeep_minutes'] ) ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( home_url( '/client-portal/client-portal-applications/' ) ) );
+		exit;
+	}
+
+	$workflow_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_minutes'] ) );
+	$result        = bizupkeep_child_resolve_generated_document_request( $workflow_uuid, array( CompanyAmendmentDefinition::TYPE ) );
+
+	if ( null === $result ) {
+		wp_die( esc_html__( 'That document could not be found.', 'bizupkeep-astra-child' ) );
+	}
+
+	nocache_headers();
+	header( 'Content-Type: text/html; charset=utf-8' );
+
+	echo bizupkeep_child_render_minutes_document( $result['workflow'], $result['company'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- the function returns a complete, self-escaping HTML document.
+
+	exit;
+}
+
+/**
+ * Build the full standalone, print-styled HTML Resolution Letter for a
+ * Company Amendment application - the directors' formal decision to
+ * make the specific change(s) applied for, pre-populated with the
+ * company's current details and each change (see
+ * bizupkeep_child_amendment_change_lines()), with a signature block
+ * for every director currently on file (the people who can actually
+ * resolve something - not any newly-proposed director from a
+ * director-change amendment, who has no standing to sign this yet).
+ * The client prints, signs, and uploads it back under the Signed
+ * Resolution Letter document category (see
+ * BIZUPKEEP_AMENDMENT_ADDITIONAL_REQUIRED_DOCUMENT_CATEGORIES).
+ */
+function bizupkeep_child_render_resolution_document( WorkflowInstance $workflow, Company $company ): string {
+	$change_lines = bizupkeep_child_amendment_change_lines( $workflow, $company );
+
+	$change_items = '';
+
+	foreach ( $change_lines as $line ) {
+		$change_items .= '<li>' . esc_html( $line ) . '</li>';
+	}
+
+	if ( '' === $change_items ) {
+		$change_items = '<li>' . esc_html__( 'No changes on file for this application.', 'bizupkeep-astra-child' ) . '</li>';
+	}
+
+	$directors_rows = bizupkeep_child_render_director_signature_rows( $company );
+
+	ob_start();
+	?>
+<!DOCTYPE html>
+<html lang="en-ZA">
+<head>
+	<meta charset="utf-8">
+	<title><?php esc_html_e( 'Board Resolution', 'bizupkeep-astra-child' ); ?></title>
+	<style>
+		html { background: #ffffff; color-scheme: light; }
+		body { font-family: Georgia, 'Times New Roman', serif; max-width: 800px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.6; color: #1a1a1a; background: #ffffff; }
+		h1 { text-align: center; font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.05em; }
+		ul.bizupkeep-resolution-items { margin: 1.25rem 0; padding-left: 1.5rem; }
+		ul.bizupkeep-resolution-items li { margin-bottom: 0.75rem; }
+		table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
+		th, td { border: 1px solid #333; padding: 0.5rem 0.75rem; text-align: left; font-size: 0.95rem; }
+		.bizupkeep-signature-cell { min-width: 120px; }
+		.bizupkeep-print-bar { text-align: center; margin-bottom: 2rem; }
+		.bizupkeep-print-bar button { font-size: 1rem; padding: 0.5rem 1.25rem; cursor: pointer; }
+		.bizupkeep-date-line { margin-top: 3rem; }
+		@media print {
+			.bizupkeep-print-bar { display: none; }
+			body { margin: 0; max-width: none; }
+		}
+	</style>
+</head>
+<body>
+	<div class="bizupkeep-print-bar">
+		<button type="button" onclick="window.print();"><?php esc_html_e( 'Print this document', 'bizupkeep-astra-child' ); ?></button>
+	</div>
+
+	<h1><?php esc_html_e( 'Board Resolution', 'bizupkeep-astra-child' ); ?></h1>
+
+	<p>
+		<?php
+		printf(
+			/* translators: 1: company name, 2: CIPC registration number */
+			esc_html__(
+				'We, the undersigned, being all of the directors of %1$s (registration number %2$s), do hereby resolve as follows:',
+				'bizupkeep-astra-child'
+			),
+			esc_html( $company->getCompanyName() ),
+			esc_html( $company->getRegistrationNumber() )
+		);
+		?>
+	</p>
+
+	<ul class="bizupkeep-resolution-items">
+		<?php echo $change_items; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built entirely from esc_html() calls above. ?>
+	</ul>
+
+	<p>
+		<?php
+		printf(
+			/* translators: %s: the practitioner's full name */
+			esc_html__(
+				'FURTHER RESOLVED that %s be and is hereby authorised, on behalf of the Company, to sign all documentation and take all steps necessary to give effect to the above with the Companies and Intellectual Property Commission (CIPC).',
+				'bizupkeep-astra-child'
+			),
+			esc_html( BIZUPKEEP_POA_ATTORNEY_NAME )
+		);
+		?>
+	</p>
+
+	<table>
+		<thead>
+			<tr>
+				<th><?php esc_html_e( 'Director', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Full Names', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'ID Number', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Signature', 'bizupkeep-astra-child' ); ?></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php echo $directors_rows; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built entirely from esc_html() calls in bizupkeep_child_render_director_signature_rows(). ?>
+		</tbody>
+	</table>
+
+	<p class="bizupkeep-date-line"><?php esc_html_e( 'Date:', 'bizupkeep-astra-child' ); ?> _______________________</p>
+</body>
+</html>
+	<?php
+	return (string) ob_get_clean();
+}
+
+/**
+ * Build the full standalone, print-styled HTML Minutes of Meeting for
+ * a Company Amendment application - the meeting record backing the
+ * Resolution Letter, with the same change list (see
+ * bizupkeep_child_amendment_change_lines()) and director signature
+ * block. The "Present" list is pre-populated from the company's
+ * current directors rather than left blank, since that's already
+ * known; the date is left for the client to fill in by hand, since the
+ * meeting itself happens after this document is generated and printed.
+ */
+function bizupkeep_child_render_minutes_document( WorkflowInstance $workflow, Company $company ): string {
+	$change_lines = bizupkeep_child_amendment_change_lines( $workflow, $company );
+
+	$change_items = '';
+
+	foreach ( $change_lines as $line ) {
+		$change_items .= '<li>' . esc_html( $line ) . '</li>';
+	}
+
+	if ( '' === $change_items ) {
+		$change_items = '<li>' . esc_html__( 'No changes on file for this application.', 'bizupkeep-astra-child' ) . '</li>';
+	}
+
+	$present_names = array_map(
+		static function ( $director ) {
+			return $director->getFullName();
+		},
+		$company->getDirectors()
+	);
+
+	$present = array() !== $present_names
+		? implode( ', ', $present_names )
+		: __( 'No directors on file.', 'bizupkeep-astra-child' );
+
+	$directors_rows = bizupkeep_child_render_director_signature_rows( $company );
+
+	ob_start();
+	?>
+<!DOCTYPE html>
+<html lang="en-ZA">
+<head>
+	<meta charset="utf-8">
+	<title><?php esc_html_e( 'Minutes of Meeting', 'bizupkeep-astra-child' ); ?></title>
+	<style>
+		html { background: #ffffff; color-scheme: light; }
+		body { font-family: Georgia, 'Times New Roman', serif; max-width: 800px; margin: 2rem auto; padding: 0 1.5rem; line-height: 1.6; color: #1a1a1a; background: #ffffff; }
+		h1 { text-align: center; font-size: 1.4rem; text-transform: uppercase; letter-spacing: 0.05em; }
+		.bizupkeep-minutes-meta p { margin: 0.35rem 0; }
+		ul.bizupkeep-resolution-items { margin: 1.25rem 0; padding-left: 1.5rem; }
+		ul.bizupkeep-resolution-items li { margin-bottom: 0.75rem; }
+		table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
+		th, td { border: 1px solid #333; padding: 0.5rem 0.75rem; text-align: left; font-size: 0.95rem; }
+		.bizupkeep-signature-cell { min-width: 120px; }
+		.bizupkeep-print-bar { text-align: center; margin-bottom: 2rem; }
+		.bizupkeep-print-bar button { font-size: 1rem; padding: 0.5rem 1.25rem; cursor: pointer; }
+		.bizupkeep-date-line { margin-top: 3rem; }
+		@media print {
+			.bizupkeep-print-bar { display: none; }
+			body { margin: 0; max-width: none; }
+		}
+	</style>
+</head>
+<body>
+	<div class="bizupkeep-print-bar">
+		<button type="button" onclick="window.print();"><?php esc_html_e( 'Print this document', 'bizupkeep-astra-child' ); ?></button>
+	</div>
+
+	<h1><?php esc_html_e( 'Minutes of Meeting', 'bizupkeep-astra-child' ); ?></h1>
+
+	<div class="bizupkeep-minutes-meta">
+		<p>
+			<?php
+			printf(
+				/* translators: 1: company name, 2: CIPC registration number */
+				esc_html__( 'Minutes of a meeting of the directors of %1$s (registration number %2$s).', 'bizupkeep-astra-child' ),
+				esc_html( $company->getCompanyName() ),
+				esc_html( $company->getRegistrationNumber() )
+			);
+			?>
+		</p>
+		<p><strong><?php esc_html_e( 'Date:', 'bizupkeep-astra-child' ); ?></strong> _______________________</p>
+		<p><strong><?php esc_html_e( 'Present:', 'bizupkeep-astra-child' ); ?></strong> <?php echo esc_html( $present ); ?></p>
+	</div>
+
+	<p><?php esc_html_e( 'The following resolutions were passed:', 'bizupkeep-astra-child' ); ?></p>
+
+	<ul class="bizupkeep-resolution-items">
+		<?php echo $change_items; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built entirely from esc_html() calls above. ?>
+	</ul>
+
+	<table>
+		<thead>
+			<tr>
+				<th><?php esc_html_e( 'Director', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Full Names', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'ID Number', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Signature', 'bizupkeep-astra-child' ); ?></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php echo $directors_rows; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built entirely from esc_html() calls in bizupkeep_child_render_director_signature_rows(). ?>
+		</tbody>
+	</table>
+
+	<p class="bizupkeep-date-line"><?php esc_html_e( 'Meeting closed at:', 'bizupkeep-astra-child' ); ?> _______________________</p>
+</body>
+</html>
+	<?php
+	return (string) ob_get_clean();
+}
+
+/**
+ * Build the director rows shared by the Resolution Letter and Minutes
+ * of Meeting's signature tables - identical shape to the rows
+ * bizupkeep_child_render_poa_document() builds inline, factored out
+ * since three documents now need it.
+ */
+function bizupkeep_child_render_director_signature_rows( Company $company ): string {
+	$rows = '';
+
+	foreach ( $company->getDirectors() as $index => $director ) {
+		$rows .= sprintf(
+			'<tr><td>%1$d</td><td>%2$s %3$s</td><td>%4$s</td><td class="bizupkeep-signature-cell"></td></tr>',
+			$index + 1,
+			esc_html( $director->getFirstName() ),
+			esc_html( $director->getLastName() ),
+			esc_html( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' )
+		);
+	}
+
+	if ( '' === $rows ) {
+		$rows = '<tr><td colspan="4">' . esc_html__( 'No directors on file.', 'bizupkeep-astra-child' ) . '</td></tr>';
+	}
+
+	return $rows;
 }
 
 /**
@@ -2790,7 +3318,7 @@ function bizupkeep_child_filing_years( array $metadata ): array {
  * false: that workflow type has no PendingDocuments stage or document
  * requirement at all (see AnnualReturnDefinition).
  *
- * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string,filing_years:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>,poa_url:?string}>
+ * @return array<int,array{workflow_uuid:string,workflow_type:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string,filing_years:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>,poa_url:?string,resolution_url:?string,minutes_url:?string}>
  */
 function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 	$sections  = array();
@@ -2799,10 +3327,13 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
 		$instance = $row['instance'];
 		$is_annual_return = AnnualReturnDefinition::TYPE === $instance->getWorkflowType();
+		$is_amendment      = CompanyAmendmentDefinition::TYPE === $instance->getWorkflowType();
 
 		$uploaded_documents = array();
 		$can_upload         = false;
 		$poa_url             = null;
+		$resolution_url       = null;
+		$minutes_url          = null;
 
 		if ( ! $is_annual_return && null !== $documents ) {
 			$uploaded_documents = array_map(
@@ -2822,6 +3353,11 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 
 			if ( in_array( $instance->getWorkflowType(), array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ), true ) ) {
 				$poa_url = bizupkeep_child_poa_url( $instance->getUuid() );
+			}
+
+			if ( $is_amendment ) {
+				$resolution_url = bizupkeep_child_resolution_url( $instance->getUuid() );
+				$minutes_url    = bizupkeep_child_minutes_url( $instance->getUuid() );
 			}
 		}
 
@@ -2854,6 +3390,7 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 
 		$sections[] = array(
 			'workflow_uuid'        => $instance->getUuid(),
+			'workflow_type'        => $instance->getWorkflowType(),
 			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
 			'company_name'         => $row['company']->getCompanyName(),
 			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus(), $instance->getWorkflowType() ),
@@ -2866,6 +3403,8 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 			'can_upload'           => $can_upload,
 			'documents'            => $uploaded_documents,
 			'poa_url'              => $poa_url,
+			'resolution_url'       => $resolution_url,
+			'minutes_url'          => $minutes_url,
 		);
 	}
 

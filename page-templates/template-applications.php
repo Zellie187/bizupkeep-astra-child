@@ -161,6 +161,28 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 											</p>
 										<?php endif; ?>
 
+										<?php if ( null !== $section['resolution_url'] ) : ?>
+											<p>
+												<a href="<?php echo esc_url( $section['resolution_url'] ); ?>" target="_blank" rel="noopener" class="bizupkeep-btn bizupkeep-btn-secondary">
+													<?php esc_html_e( 'Download / Print Your Resolution Letter', 'bizupkeep-astra-child' ); ?>
+												</a>
+											</p>
+											<p class="bizupkeep-field-hint">
+												<?php esc_html_e( 'Print it, get it signed by every director, then upload the signed copy below as "Signed Resolution Letter".', 'bizupkeep-astra-child' ); ?>
+											</p>
+										<?php endif; ?>
+
+										<?php if ( null !== $section['minutes_url'] ) : ?>
+											<p>
+												<a href="<?php echo esc_url( $section['minutes_url'] ); ?>" target="_blank" rel="noopener" class="bizupkeep-btn bizupkeep-btn-secondary">
+													<?php esc_html_e( 'Download / Print Your Minutes of Meeting', 'bizupkeep-astra-child' ); ?>
+												</a>
+											</p>
+											<p class="bizupkeep-field-hint">
+												<?php esc_html_e( 'Print it, get it signed by every director, then upload the signed copy below as "Signed Minutes of Meeting".', 'bizupkeep-astra-child' ); ?>
+											</p>
+										<?php endif; ?>
+
 										<?php if ( array() !== $section['documents'] ) : ?>
 											<table class="bizupkeep-documents-table">
 												<tbody>
@@ -187,6 +209,10 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 													<option value=""><?php esc_html_e( 'Select an option', 'bizupkeep-astra-child' ); ?></option>
 													<option value="id_document"><?php esc_html_e( 'ID Document', 'bizupkeep-astra-child' ); ?></option>
 													<option value="signed_poa"><?php esc_html_e( 'Signed Power of Attorney', 'bizupkeep-astra-child' ); ?></option>
+													<?php if ( 'company_amendment' === $section['workflow_type'] ) : ?>
+														<option value="signed_resolution"><?php esc_html_e( 'Signed Resolution Letter', 'bizupkeep-astra-child' ); ?></option>
+														<option value="signed_minutes"><?php esc_html_e( 'Signed Minutes of Meeting', 'bizupkeep-astra-child' ); ?></option>
+													<?php endif; ?>
 												</select>
 
 												<label for="bizupkeep-file-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">

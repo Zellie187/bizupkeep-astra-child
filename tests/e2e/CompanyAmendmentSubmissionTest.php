@@ -39,6 +39,9 @@ final class CompanyAmendmentSubmissionTest extends E2ETestCase
                     'city' => 'Cape Town',
                     'postal_code' => '8001',
                 ],
+                'director' => [
+                    ['first_name' => 'E2E', 'last_name' => 'Tester', 'id_number' => '9001015800086'],
+                ],
             ],
             'amendment_types' => ['address'],
             'amendment_address' => [
@@ -74,5 +77,13 @@ final class CompanyAmendmentSubmissionTest extends E2ETestCase
 
         self::assertSame(['address'], $metadata['amendment_types'] ?? null);
         self::assertSame('2 New Address Avenue', $metadata['new_address']['address_line_1'] ?? null);
+
+        $director = $this->db->fetchOne(
+            'SELECT * FROM ' . $this->db->table('bizhub_directors') . ' WHERE company_uuid = ?',
+            [$company['uuid']]
+        );
+
+        self::assertNotNull($director, 'No director row was created for the new company - required since the Power of Attorney needs someone to sign it.');
+        self::assertSame('E2E', $director['first_name']);
     }
 }
