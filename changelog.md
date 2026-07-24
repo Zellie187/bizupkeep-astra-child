@@ -1,5 +1,9 @@
 # BizUpKeep Astra Child - Changelog
 
+## 1.22.0
+- **Resigning directors are now clearly flagged on all three generated documents** (Power of Attorney, Resolution Letter, Minutes of Meeting): each director signature table gained a "Status" column, showing "Resigning" against any director a Company Amendment's director change marks for removal - previously that only appeared as a sentence in the Resolution/Minutes' change list, with no indication in the signature table itself of which signatory it referred to. A resigning director still gets their own row to sign, same as before.
+- Verified end-to-end against the local test environment: submitted a director change against an existing company (one director removed, one added), confirmed all three documents correctly mark the departing director "Resigning" in their own row while the remaining director's row stays blank.
+
 ## 1.21.1
 - Reworded the "Current Directors" field hint on the Company Amendment "not registered with us" form for a clearer, client-facing explanation of why it's asked for regardless of amendment type.
 

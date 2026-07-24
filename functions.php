@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.21.1' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.22.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -2128,21 +2128,25 @@ function bizupkeep_child_render_poa_document( WorkflowInstance $workflow, Compan
 		$action_verb         = __( 'Register', 'bizupkeep-astra-child' );
 	}
 
-	$directors_rows = '';
+	$removed_director_uuids = $is_amendment ? bizupkeep_child_amendment_removed_director_uuids( $workflow ) : array();
+	$directors_rows          = '';
 
 	foreach ( $company->getDirectors() as $index => $director ) {
+		$is_resigning = in_array( $director->getUuid(), $removed_director_uuids, true );
+
 		$directors_rows .= sprintf(
-			'<tr><td>%1$d</td><td>%2$s</td><td>%3$s %4$s</td><td>%5$s</td><td class="bizupkeep-poa-signature-cell"></td></tr>',
+			'<tr><td>%1$d</td><td>%2$s</td><td>%3$s %4$s</td><td>%5$s</td><td>%6$s</td><td class="bizupkeep-poa-signature-cell"></td></tr>',
 			$index + 1,
 			esc_html( $director->getLastName() ),
 			esc_html( $director->getFirstName() ),
 			esc_html( $director->getLastName() ),
-			esc_html( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' )
+			esc_html( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' ),
+			$is_resigning ? '<strong>' . esc_html__( 'Resigning', 'bizupkeep-astra-child' ) . '</strong>' : ''
 		);
 	}
 
 	if ( '' === $directors_rows ) {
-		$directors_rows = '<tr><td colspan="5">' . esc_html__( 'No directors on file.', 'bizupkeep-astra-child' ) . '</td></tr>';
+		$directors_rows = '<tr><td colspan="6">' . esc_html__( 'No directors on file.', 'bizupkeep-astra-child' ) . '</td></tr>';
 	}
 
 	ob_start();
@@ -2198,6 +2202,7 @@ function bizupkeep_child_render_poa_document( WorkflowInstance $workflow, Compan
 				<th><?php esc_html_e( 'Surname', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'Full Names', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'ID Number', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Status', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'Signature', 'bizupkeep-astra-child' ); ?></th>
 			</tr>
 		</thead>
@@ -2501,7 +2506,7 @@ function bizupkeep_child_render_resolution_document( WorkflowInstance $workflow,
 		$change_items = '<li>' . esc_html__( 'No changes on file for this application.', 'bizupkeep-astra-child' ) . '</li>';
 	}
 
-	$directors_rows = bizupkeep_child_render_director_signature_rows( $company );
+	$directors_rows = bizupkeep_child_render_director_signature_rows( $company, bizupkeep_child_amendment_removed_director_uuids( $workflow ) );
 
 	ob_start();
 	?>
@@ -2572,6 +2577,7 @@ function bizupkeep_child_render_resolution_document( WorkflowInstance $workflow,
 				<th><?php esc_html_e( 'Director', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'Full Names', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'ID Number', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Status', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'Signature', 'bizupkeep-astra-child' ); ?></th>
 			</tr>
 		</thead>
@@ -2621,7 +2627,7 @@ function bizupkeep_child_render_minutes_document( WorkflowInstance $workflow, Co
 		? implode( ', ', $present_names )
 		: __( 'No directors on file.', 'bizupkeep-astra-child' );
 
-	$directors_rows = bizupkeep_child_render_director_signature_rows( $company );
+	$directors_rows = bizupkeep_child_render_director_signature_rows( $company, bizupkeep_child_amendment_removed_director_uuids( $workflow ) );
 
 	ob_start();
 	?>
@@ -2683,6 +2689,7 @@ function bizupkeep_child_render_minutes_document( WorkflowInstance $workflow, Co
 				<th><?php esc_html_e( 'Director', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'Full Names', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'ID Number', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Status', 'bizupkeep-astra-child' ); ?></th>
 				<th><?php esc_html_e( 'Signature', 'bizupkeep-astra-child' ); ?></th>
 			</tr>
 		</thead>
@@ -2699,26 +2706,60 @@ function bizupkeep_child_render_minutes_document( WorkflowInstance $workflow, Co
 }
 
 /**
+ * The UUIDs of every director a Company Amendment's director_changes
+ * metadata marks for removal - so bizupkeep_child_render_director_signature_rows()
+ * can flag them in the Resolution Letter/Minutes of Meeting signature
+ * table, not just in bizupkeep_child_amendment_change_lines()' prose
+ * ("The following director(s) resign..."). A resigning director still
+ * needs their own row to sign (their resignation, like everyone
+ * else's assent to the other changes, needs their signature) - this
+ * only affects how that row reads, not whether it appears.
+ *
+ * @return string[]
+ */
+function bizupkeep_child_amendment_removed_director_uuids( WorkflowInstance $workflow ): array {
+	$metadata         = $workflow->getMetadata();
+	$director_changes = isset( $metadata['director_changes'] ) && is_array( $metadata['director_changes'] ) ? $metadata['director_changes'] : array();
+	$removed          = array();
+
+	foreach ( $director_changes as $change ) {
+		if ( is_array( $change ) && 'remove' === ( $change['action'] ?? '' ) && isset( $change['uuid'] ) ) {
+			$removed[] = (string) $change['uuid'];
+		}
+	}
+
+	return $removed;
+}
+
+/**
  * Build the director rows shared by the Resolution Letter and Minutes
  * of Meeting's signature tables - identical shape to the rows
  * bizupkeep_child_render_poa_document() builds inline, factored out
- * since three documents now need it.
+ * since three documents now need it. $removedUuids (see
+ * bizupkeep_child_amendment_removed_director_uuids()) marks any
+ * matching row "Resigning" in its own Status column, so it's clear at
+ * a glance which signatory is the one stepping down.
+ *
+ * @param string[] $removedUuids
  */
-function bizupkeep_child_render_director_signature_rows( Company $company ): string {
+function bizupkeep_child_render_director_signature_rows( Company $company, array $removedUuids = array() ): string {
 	$rows = '';
 
 	foreach ( $company->getDirectors() as $index => $director ) {
+		$is_resigning = in_array( $director->getUuid(), $removedUuids, true );
+
 		$rows .= sprintf(
-			'<tr><td>%1$d</td><td>%2$s %3$s</td><td>%4$s</td><td class="bizupkeep-signature-cell"></td></tr>',
+			'<tr><td>%1$d</td><td>%2$s %3$s</td><td>%4$s</td><td>%5$s</td><td class="bizupkeep-signature-cell"></td></tr>',
 			$index + 1,
 			esc_html( $director->getFirstName() ),
 			esc_html( $director->getLastName() ),
-			esc_html( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' )
+			esc_html( $director->getIdNumber() ?? $director->getPassportNumber() ?? '' ),
+			$is_resigning ? '<strong>' . esc_html__( 'Resigning', 'bizupkeep-astra-child' ) . '</strong>' : ''
 		);
 	}
 
 	if ( '' === $rows ) {
-		$rows = '<tr><td colspan="4">' . esc_html__( 'No directors on file.', 'bizupkeep-astra-child' ) . '</td></tr>';
+		$rows = '<tr><td colspan="5">' . esc_html__( 'No directors on file.', 'bizupkeep-astra-child' ) . '</td></tr>';
 	}
 
 	return $rows;
