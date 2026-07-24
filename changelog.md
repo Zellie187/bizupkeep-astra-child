@@ -1,5 +1,8 @@
 # BizUpKeep Astra Child - Changelog
 
+## 1.21.1
+- Reworded the "Current Directors" field hint on the Company Amendment "not registered with us" form for a clearer, client-facing explanation of why it's asked for regardless of amendment type.
+
 ## 1.21.0
 - **Resolution Letter and Minutes of Meeting generation for Company Amendment**: mirrors the existing Power of Attorney generator - each document is pre-populated with the company's current details and a plain-English description of the exact change(s) being applied for (name/address changes read "from X to Y"; director changes list only full name and ID/passport number, per how these need to read), with a signature block for every current director. Both are now required uploads for Company Amendment specifically (not Company Registration, which has no existing board to resolve anything) - requires bizhub 0.3.0's new `SIGNED_RESOLUTION`/`SIGNED_MINUTES` document categories.
 - Download links for both appear on My Applications alongside the existing Power of Attorney link, and the upload category dropdown gains the two matching options - both amendment-only, gated on the row's workflow type.

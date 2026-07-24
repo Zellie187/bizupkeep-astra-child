@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.21.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.21.1' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -1461,7 +1461,7 @@ function bizupkeep_child_render_company_picker( string $prefix, array $companies
 
 		<?php if ( $include_directors ) : ?>
 			<h3><?php esc_html_e( 'Current Directors', 'bizupkeep-astra-child' ); ?></h3>
-			<p class="bizupkeep-field-hint"><?php esc_html_e( "We need this now, not just for a Director Amendment - these are the people who'll need to sign the Power of Attorney, whatever you're changing.", 'bizupkeep-astra-child' ); ?></p>
+			<p class="bizupkeep-field-hint"><?php esc_html_e( 'We require the full company profile regardless of changes made to ensure everything is up to date', 'bizupkeep-astra-child' ); ?></p>
 
 			<div class="bizupkeep-repeater" data-repeater="<?php echo esc_attr( $prefix ); ?>-new-company-director" data-max="10" data-template-id="bizupkeep-<?php echo esc_attr( $prefix ); ?>-new-company-director-template">
 				<div class="bizupkeep-repeater-blocks">
