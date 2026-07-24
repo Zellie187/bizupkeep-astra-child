@@ -13,6 +13,7 @@ use BizHub\ClientPortal\Contracts\ClientServiceInterface;
 use BizHub\ClientPortal\DTO\ClientData;
 use BizHub\ClientPortal\DTO\ProfileData;
 use BizHub\ClientPortal\Exceptions\ClientNotFoundException;
+use BizHub\ClientPortal\Services\ProfileService;
 use BizHub\Companies\Contracts\CompanyServiceInterface;
 use BizHub\Companies\Contracts\DirectorRepositoryInterface;
 use BizHub\Companies\DTO\AddressData;
@@ -33,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.18.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.19.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -82,6 +83,7 @@ function bizupkeep_child_register_page_templates( array $templates ): array {
 	$templates['page-templates/template-apply.php']       = __( 'BizUpKeep Apply', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-documents.php']   = __( 'BizUpKeep My Documents', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-applications.php'] = __( 'BizUpKeep My Applications', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-profile.php']     = __( 'BizUpKeep My Profile', 'bizupkeep-astra-child' );
 
 	return $templates;
 }
@@ -192,6 +194,10 @@ function bizupkeep_child_setup_client_portal(): void {
 
 		if ( 'client-portal-applications' === $slug && 0 !== $page_id ) {
 			update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-applications.php' );
+		}
+
+		if ( 'client-portal-profile' === $slug && 0 !== $page_id ) {
+			update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-profile.php' );
 		}
 
 		$menu_targets[] = array(
@@ -1527,21 +1533,33 @@ const BIZUPKEEP_MAX_DOCUMENT_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB.
 add_action( 'template_redirect', 'bizupkeep_child_handle_document_upload' );
 
 /**
- * Handle the My Documents page's upload form POST. Runs on
- * template_redirect (before the page template renders) so it can
- * redirect on success or failure.
+ * Handle the document upload form POST, now surfaced on My
+ * Applications rather than a separate My Documents page. Still
+ * accepted from the old My Documents page URL too (which now just
+ * redirects into My Applications on a plain GET, see
+ * template-documents.php) so a stale open tab or bookmark still
+ * works. Runs on template_redirect (before the page template renders)
+ * so it can redirect on success or failure.
  */
 function bizupkeep_child_handle_document_upload(): void {
 	if ( ! isset( $_POST['bizupkeep_upload_nonce'] ) ) {
 		return;
 	}
 
-	if ( ! is_page() || bizupkeep_child_find_page( 'client-portal-documents', bizupkeep_child_find_page( 'client-portal', 0 ) ) !== get_queried_object_id() ) {
+	$client_portal_id = bizupkeep_child_find_page( 'client-portal', 0 );
+	$accepted_page_ids = array(
+		bizupkeep_child_find_page( 'client-portal-applications', $client_portal_id ),
+		bizupkeep_child_find_page( 'client-portal-documents', $client_portal_id ),
+	);
+
+	if ( ! is_page() || ! in_array( get_queried_object_id(), $accepted_page_ids, true ) ) {
 		return;
 	}
 
+	$applications_url = home_url( '/client-portal/client-portal-applications/' );
+
 	if ( ! is_user_logged_in() ) {
-		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		wp_safe_redirect( wp_login_url( $applications_url ) );
 		exit;
 	}
 
@@ -1553,7 +1571,7 @@ function bizupkeep_child_handle_document_upload(): void {
 
 	$result = bizupkeep_child_process_document_upload( $wp_user_id, $workflow_uuid, $category_raw );
 
-	wp_safe_redirect( add_query_arg( $result ? 'uploaded' : 'upload_error', '1', get_permalink() ) );
+	wp_safe_redirect( add_query_arg( $result ? 'uploaded' : 'upload_error', '1', $applications_url ) );
 	exit;
 }
 
@@ -1812,8 +1830,8 @@ function bizupkeep_child_workflow_type_label( string $workflow_type ): string {
  *
  * Only ever reached for Company Registration/Amendment (the two types
  * with a PendingDocuments stage) - see
- * bizupkeep_child_documents_sections(), which never offers an upload
- * form for an Annual Return application in the first place.
+ * bizupkeep_child_applications_sections(), which never offers an
+ * upload form for an Annual Return application in the first place.
  */
 function bizupkeep_child_maybe_verify_documents( WorkflowInstance $workflow, int $wp_user_id ): void {
 	if ( WorkflowStatus::PendingDocuments !== $workflow->getStatus() ) {
@@ -1922,68 +1940,6 @@ function bizupkeep_child_client_workflow_instances( int $wp_user_id ): array {
 }
 
 /**
- * Build the data the My Documents template needs: one section per
- * application (workflow instance) belonging to the logged-in user's
- * client record, each with its own status, the owning company's
- * already-uploaded documents, and whether uploads are currently
- * accepted (only while that specific application is PendingDocuments).
- *
- * Annual Return applications are excluded entirely - that workflow
- * type has no PendingDocuments stage or document requirement at all
- * (see AnnualReturnDefinition), so there's nothing for this page to
- * show for one.
- *
- * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>,poa_url:?string}>
- */
-function bizupkeep_child_documents_sections( int $wp_user_id ): array {
-	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
-		return array();
-	}
-
-	$documents = bizhub()->container()->get( DocumentService::class );
-	$sections  = array();
-
-	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
-		$instance = $row['instance'];
-
-		if ( AnnualReturnDefinition::TYPE === $instance->getWorkflowType() ) {
-			continue;
-		}
-
-		$uploaded = array_map(
-			static function ( $document ) {
-				$version = $document->getCurrentVersion();
-
-				return array(
-					'category_label' => $document->getCategory()->label(),
-					'name'            => $document->getName(),
-					'uploaded_at'     => $version ? $version->uploadedAt->format( 'j M Y' ) : '',
-				);
-			},
-			$documents->getDocumentsForOwner( 'company', $row['company']->getUuid() )
-		);
-
-		$needs_poa = in_array(
-			$instance->getWorkflowType(),
-			array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ),
-			true
-		);
-
-		$sections[] = array(
-			'workflow_uuid'        => $instance->getUuid(),
-			'workflow_type_label' => bizupkeep_child_workflow_type_label( $instance->getWorkflowType() ),
-			'company_name'         => $row['company']->getCompanyName(),
-			'status_label'         => bizupkeep_child_workflow_status_label( $instance->getStatus(), $instance->getWorkflowType() ),
-			'can_upload'           => WorkflowStatus::PendingDocuments === $instance->getStatus(),
-			'documents'            => $uploaded,
-			'poa_url'              => $needs_poa ? bizupkeep_child_poa_url( $instance->getUuid() ) : null,
-		);
-	}
-
-	return $sections;
-}
-
-/**
  * The name and CIPC customer code of the person clients grant power of
  * attorney to - A2Z Business Administrators' registered practitioner.
  * Kept as named constants rather than buried in the POA markup itself,
@@ -2000,7 +1956,7 @@ const BIZUPKEEP_POA_ATTORNEY_CUSTOMER_CODE = 'A01607';
  * template_redirect and never lets the linked-to page actually render.
  */
 function bizupkeep_child_poa_url( string $workflow_uuid ): string {
-	return add_query_arg( 'bizupkeep_poa', $workflow_uuid, home_url( '/client-portal/client-portal-documents/' ) );
+	return add_query_arg( 'bizupkeep_poa', $workflow_uuid, home_url( '/client-portal/client-portal-applications/' ) );
 }
 
 add_action( 'template_redirect', 'bizupkeep_child_handle_poa_request' );
@@ -2021,7 +1977,7 @@ function bizupkeep_child_handle_poa_request(): void {
 	}
 
 	if ( ! is_user_logged_in() ) {
-		wp_safe_redirect( wp_login_url( home_url( '/client-portal/client-portal-documents/' ) ) );
+		wp_safe_redirect( wp_login_url( home_url( '/client-portal/client-portal-applications/' ) ) );
 		exit;
 	}
 
@@ -2769,14 +2725,50 @@ function bizupkeep_child_filing_years( array $metadata ): array {
  * the exact staff-quoted amount rather than whatever product the
  * client happens to pick.
  *
- * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string,filing_years:string}>
+ * Also carries each application's document data (already-uploaded
+ * documents, whether it's currently accepting an upload, and its POA
+ * download link where relevant) so this one page can cover what used
+ * to be split across My Applications and My Documents - see
+ * bizupkeep_child_process_document_upload() for where an upload
+ * submitted from this page's form actually gets handled. Annual
+ * Return applications get an empty documents list and can_upload =
+ * false: that workflow type has no PendingDocuments stage or document
+ * requirement at all (see AnnualReturnDefinition).
+ *
+ * @return array<int,array{workflow_uuid:string,workflow_type_label:string,company_name:string,status_label:string,pay_url:?string,needs_resubmission:bool,rejection_reason:string,quote_amount:?float,quote_notes:string,filing_years:string,can_upload:bool,documents:array<int,array{category_label:string,name:string,uploaded_at:string}>,poa_url:?string}>
  */
 function bizupkeep_child_applications_sections( int $wp_user_id ): array {
-	$sections = array();
+	$sections  = array();
+	$documents = ( function_exists( 'bizhub' ) && null !== bizhub() ) ? bizhub()->container()->get( DocumentService::class ) : null;
 
 	foreach ( bizupkeep_child_client_workflow_instances( $wp_user_id ) as $row ) {
 		$instance = $row['instance'];
 		$is_annual_return = AnnualReturnDefinition::TYPE === $instance->getWorkflowType();
+
+		$uploaded_documents = array();
+		$can_upload         = false;
+		$poa_url             = null;
+
+		if ( ! $is_annual_return && null !== $documents ) {
+			$uploaded_documents = array_map(
+				static function ( $document ) {
+					$version = $document->getCurrentVersion();
+
+					return array(
+						'category_label' => $document->getCategory()->label(),
+						'name'            => $document->getName(),
+						'uploaded_at'     => $version ? $version->uploadedAt->format( 'j M Y' ) : '',
+					);
+				},
+				$documents->getDocumentsForOwner( 'company', $row['company']->getUuid() )
+			);
+
+			$can_upload = WorkflowStatus::PendingDocuments === $instance->getStatus();
+
+			if ( in_array( $instance->getWorkflowType(), array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ), true ) ) {
+				$poa_url = bizupkeep_child_poa_url( $instance->getUuid() );
+			}
+		}
 
 		$needs_resubmission = in_array( $instance->getWorkflowType(), array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ), true )
 			&& WorkflowStatus::NamesRejected === $instance->getStatus();
@@ -2816,6 +2808,9 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 			'quote_amount'         => $quote_amount,
 			'quote_notes'          => $quote_notes,
 			'filing_years'         => $filing_years,
+			'can_upload'           => $can_upload,
+			'documents'            => $uploaded_documents,
+			'poa_url'              => $poa_url,
 		);
 	}
 
@@ -2932,6 +2927,119 @@ function bizupkeep_child_process_resubmit_names( int $wp_user_id, string $workfl
 			$wp_user_id,
 			__( 'Client resubmitted new proposed company names.', 'bizupkeep-astra-child' ),
 			array( 'proposed_names' => $proposed_names )
+		);
+	} catch ( \Throwable $e ) {
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Build the data the My Profile template needs: the logged-in user's
+ * editable BizHub profile fields (first/last name, phone - see
+ * BizHub\ClientPortal\Entities\Profile) alongside their WordPress
+ * account's email and username, which this page shows read-only
+ * rather than lets the client edit here - email changes and password
+ * changes go through WordPress' own account tools
+ * (bizupkeep_child_password_change_url()), not this form. Returns
+ * null if the client record can't be resolved (shouldn't normally
+ * happen - bizupkeep_child_guard_client_portal() provisions one for
+ * every logged-in visitor to any client-portal-* page before this
+ * ever runs).
+ *
+ * @return array{first_name:string,last_name:string,phone:string,email:string,username:string}|null
+ */
+function bizupkeep_child_profile_data( int $wp_user_id ): ?array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return null;
+	}
+
+	try {
+		$client = bizhub()->container()->get( ClientServiceInterface::class )->getClientByWpUserId( $wp_user_id );
+	} catch ( ClientNotFoundException $e ) {
+		return null;
+	}
+
+	$wp_user = get_userdata( $wp_user_id );
+
+	if ( false === $wp_user ) {
+		return null;
+	}
+
+	$profile = $client->getProfile();
+
+	return array(
+		'first_name' => $profile->getFirstName(),
+		'last_name'  => $profile->getLastName(),
+		'phone'      => $profile->getPhone(),
+		'email'      => $wp_user->user_email,
+		'username'   => $wp_user->user_login,
+	);
+}
+
+/**
+ * The URL to WordPress' own "reset your password" flow - deliberately
+ * not reimplemented on the My Profile page, since password changes
+ * are a WordPress account/security concern, not a BizHub client
+ * profile field.
+ */
+function bizupkeep_child_password_change_url(): string {
+	return wp_lostpassword_url( home_url( '/client-portal/client-portal-profile/' ) );
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_profile_update' );
+
+/**
+ * Handle the My Profile page's update form POST. Runs on
+ * template_redirect (before the page template renders) so it can
+ * redirect on success or failure.
+ */
+function bizupkeep_child_handle_profile_update(): void {
+	if ( ! isset( $_POST['bizupkeep_profile_nonce'] ) ) {
+		return;
+	}
+
+	if ( ! is_page() || bizupkeep_child_find_page( 'client-portal-profile', bizupkeep_child_find_page( 'client-portal', 0 ) ) !== get_queried_object_id() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_update_profile', 'bizupkeep_profile_nonce' );
+
+	$result = bizupkeep_child_process_profile_update( get_current_user_id() );
+
+	wp_safe_redirect( add_query_arg( $result ? 'profile_updated' : 'profile_error', '1', get_permalink() ) );
+	exit;
+}
+
+/**
+ * Validate and persist the posted first name/last name/phone against
+ * the logged-in user's BizHub client profile. Returns false (rather
+ * than throwing) on any failure - both Profile's own validation
+ * (first/last name can't be blank) and any BizHub service failure are
+ * treated as "show a generic error", the same approach every other
+ * public-facing form handler in this file takes.
+ */
+function bizupkeep_child_process_profile_update( int $wp_user_id ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$first_name = isset( $_POST['first_name'] ) ? sanitize_text_field( wp_unslash( $_POST['first_name'] ) ) : '';
+	$last_name  = isset( $_POST['last_name'] ) ? sanitize_text_field( wp_unslash( $_POST['last_name'] ) ) : '';
+	$phone      = isset( $_POST['phone'] ) ? sanitize_text_field( wp_unslash( $_POST['phone'] ) ) : '';
+
+	try {
+		$client = bizhub()->container()->get( ClientServiceInterface::class )->getClientByWpUserId( $wp_user_id );
+
+		bizhub()->container()->get( ProfileService::class )->updateProfile(
+			$client->getUuid(),
+			new ProfileData( $first_name, $last_name, $phone, $client->getProfile()->getAvatarUrl() )
 		);
 	} catch ( \Throwable $e ) {
 		return false;

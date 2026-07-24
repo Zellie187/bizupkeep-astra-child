@@ -60,7 +60,10 @@ get_header();
 			<?php endif; ?>
 
 			<?php
-			$companies = bizupkeep_child_client_companies_for_form( get_current_user_id() );
+			$companies      = bizupkeep_child_client_companies_for_form( get_current_user_id() );
+			$valid_types    = array( 'new_registration', 'company_amendment', 'annual_return' );
+			$selected_type  = isset( $_GET['type'] ) ? sanitize_key( wp_unslash( $_GET['type'] ) ) : 'new_registration';
+			$selected_type  = in_array( $selected_type, $valid_types, true ) ? $selected_type : 'new_registration';
 			?>
 
 			<form method="post" class="bizupkeep-upload-form bizupkeep-apply-form" id="bizupkeep-apply-form">
@@ -70,21 +73,21 @@ get_header();
 					<legend><?php esc_html_e( 'What do you need?', 'bizupkeep-astra-child' ); ?></legend>
 
 					<label class="bizupkeep-type-option">
-						<input type="radio" name="application_type" value="new_registration" checked>
+						<input type="radio" name="application_type" value="new_registration" <?php checked( $selected_type, 'new_registration' ); ?>>
 						<?php esc_html_e( 'New Company Registration', 'bizupkeep-astra-child' ); ?>
 					</label>
 					<label class="bizupkeep-type-option">
-						<input type="radio" name="application_type" value="company_amendment">
+						<input type="radio" name="application_type" value="company_amendment" <?php checked( $selected_type, 'company_amendment' ); ?>>
 						<?php esc_html_e( 'Company Amendment', 'bizupkeep-astra-child' ); ?>
 					</label>
 					<label class="bizupkeep-type-option">
-						<input type="radio" name="application_type" value="annual_return">
+						<input type="radio" name="application_type" value="annual_return" <?php checked( $selected_type, 'annual_return' ); ?>>
 						<?php esc_html_e( 'Annual Return', 'bizupkeep-astra-child' ); ?>
 					</label>
 				</fieldset>
 
 				<!-- ============ New Company Registration ============ -->
-				<section class="bizupkeep-apply-section" data-application-type="new_registration">
+				<section class="bizupkeep-apply-section" data-application-type="new_registration" <?php echo 'new_registration' === $selected_type ? '' : 'hidden'; ?>>
 
 					<h2><?php esc_html_e( 'Company Details', 'bizupkeep-astra-child' ); ?></h2>
 					<p class="bizupkeep-field-hint"><?php esc_html_e( 'Private Company (Pty) Ltd only - Close Corporations can no longer be registered.', 'bizupkeep-astra-child' ); ?></p>
@@ -126,7 +129,7 @@ get_header();
 				</section>
 
 				<!-- ============ Company Amendment ============ -->
-				<section class="bizupkeep-apply-section" data-application-type="company_amendment" hidden>
+				<section class="bizupkeep-apply-section" data-application-type="company_amendment" <?php echo 'company_amendment' === $selected_type ? '' : 'hidden'; ?>>
 
 					<h2><?php esc_html_e( 'Which Company?', 'bizupkeep-astra-child' ); ?></h2>
 
@@ -208,7 +211,7 @@ get_header();
 				</section>
 
 				<!-- ============ Annual Return ============ -->
-				<section class="bizupkeep-apply-section" data-application-type="annual_return" hidden>
+				<section class="bizupkeep-apply-section" data-application-type="annual_return" <?php echo 'annual_return' === $selected_type ? '' : 'hidden'; ?>>
 
 					<h2><?php esc_html_e( 'Annual Return', 'bizupkeep-astra-child' ); ?></h2>
 

@@ -1,17 +1,18 @@
 <?php
 /**
  * Template Name: BizUpKeep My Documents
- * Description:   Client Portal document collection page - one section
- *                 per application (workflow instance) the logged-in
- *                 client has, each with its own status, the owning
- *                 company's already-uploaded documents, and an upload
- *                 form while that specific application is waiting on
- *                 documents. Upload handling is in
- *                 bizupkeep_child_handle_document_upload() in
- *                 functions.php (runs on template_redirect, before
- *                 this template renders, so it can redirect on
- *                 success/failure). This page is only reachable while
- *                 logged in - see bizupkeep_child_guard_client_portal().
+ * Description:   Retired standalone page - My Documents was merged
+ *                 into My Applications so clients can upload documents
+ *                 directly from their application list instead of
+ *                 hopping between two pages. This template now only
+ *                 redirects here. Left in place (rather than deleted)
+ *                 so the page object, its menu entry, and any
+ *                 bookmarked/cached link keep working. See
+ *                 bizupkeep_child_applications_sections() and
+ *                 template-applications.php for where the merged
+ *                 content actually lives, and
+ *                 bizupkeep_child_handle_document_upload() for why a
+ *                 POST submitted to this old URL still works too.
  *
  * @package BizUpKeep_Astra_Child
  */
@@ -20,97 +21,5 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-get_header();
-
-$sections = bizupkeep_child_documents_sections( get_current_user_id() );
-?>
-
-<main id="bizupkeep-documents" class="bizupkeep-documents">
-	<div class="bizupkeep-documents-inner">
-
-		<h1><?php esc_html_e( 'My Documents', 'bizupkeep-astra-child' ); ?></h1>
-
-		<?php if ( isset( $_GET['uploaded'] ) ) : ?>
-			<p class="bizupkeep-status-pill"><?php esc_html_e( 'Document uploaded.', 'bizupkeep-astra-child' ); ?></p>
-		<?php elseif ( isset( $_GET['upload_error'] ) ) : ?>
-			<p class="bizupkeep-status-pill"><?php esc_html_e( "Something went wrong with that upload - please check the file (PDF, JPG or PNG, max 5MB) and try again.", 'bizupkeep-astra-child' ); ?></p>
-		<?php endif; ?>
-
-		<?php if ( array() === $sections ) : ?>
-
-			<p><?php esc_html_e( "You don't have any applications in progress yet.", 'bizupkeep-astra-child' ); ?></p>
-			<p>
-				<a href="<?php echo esc_url( home_url( '/apply/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
-					<?php esc_html_e( 'Start an Application', 'bizupkeep-astra-child' ); ?>
-				</a>
-			</p>
-
-		<?php else : ?>
-
-			<?php foreach ( $sections as $section ) : ?>
-				<section class="bizupkeep-company-documents">
-					<span class="bizupkeep-workflow-type-badge"><?php echo esc_html( $section['workflow_type_label'] ); ?></span>
-					<h2><?php echo esc_html( $section['company_name'] ); ?></h2>
-					<span class="bizupkeep-status-pill"><?php echo esc_html( $section['status_label'] ); ?></span>
-
-					<?php if ( null !== $section['poa_url'] ) : ?>
-						<p>
-							<a href="<?php echo esc_url( $section['poa_url'] ); ?>" target="_blank" rel="noopener" class="bizupkeep-btn bizupkeep-btn-secondary">
-								<?php esc_html_e( 'Download / Print Your Power of Attorney', 'bizupkeep-astra-child' ); ?>
-							</a>
-						</p>
-						<p class="bizupkeep-field-hint">
-							<?php esc_html_e( 'Print it, get it signed by every director, then upload the signed copy below as "Signed Power of Attorney".', 'bizupkeep-astra-child' ); ?>
-						</p>
-					<?php endif; ?>
-
-					<?php if ( array() !== $section['documents'] ) : ?>
-						<table class="bizupkeep-documents-table">
-							<tbody>
-								<?php foreach ( $section['documents'] as $document ) : ?>
-									<tr>
-										<td><?php echo esc_html( $document['category_label'] ); ?></td>
-										<td><?php echo esc_html( $document['name'] ); ?></td>
-										<td><?php echo esc_html( $document['uploaded_at'] ); ?></td>
-									</tr>
-								<?php endforeach; ?>
-							</tbody>
-						</table>
-					<?php endif; ?>
-
-					<?php if ( $section['can_upload'] ) : ?>
-						<form method="post" enctype="multipart/form-data" class="bizupkeep-upload-form">
-							<?php wp_nonce_field( 'bizupkeep_upload_document', 'bizupkeep_upload_nonce' ); ?>
-							<input type="hidden" name="workflow_uuid" value="<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
-
-							<label for="bizupkeep-category-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
-								<?php esc_html_e( 'Document Type', 'bizupkeep-astra-child' ); ?>
-							</label>
-							<select id="bizupkeep-category-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="category" required>
-								<option value=""><?php esc_html_e( 'Select an option', 'bizupkeep-astra-child' ); ?></option>
-								<option value="id_document"><?php esc_html_e( 'ID Document', 'bizupkeep-astra-child' ); ?></option>
-								<option value="signed_poa"><?php esc_html_e( 'Signed Power of Attorney', 'bizupkeep-astra-child' ); ?></option>
-							</select>
-
-							<label for="bizupkeep-file-<?php echo esc_attr( $section['workflow_uuid'] ); ?>">
-								<?php esc_html_e( 'File (PDF, JPG or PNG, max 5MB)', 'bizupkeep-astra-child' ); ?>
-							</label>
-							<input type="file" id="bizupkeep-file-<?php echo esc_attr( $section['workflow_uuid'] ); ?>" name="document" accept=".pdf,.jpg,.jpeg,.png" required>
-
-							<p>
-								<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
-									<?php esc_html_e( 'Upload', 'bizupkeep-astra-child' ); ?>
-								</button>
-							</p>
-						</form>
-					<?php endif; ?>
-				</section>
-			<?php endforeach; ?>
-
-		<?php endif; ?>
-
-	</div>
-</main>
-
-<?php
-get_footer();
+wp_safe_redirect( home_url( '/client-portal/client-portal-applications/' ) );
+exit;

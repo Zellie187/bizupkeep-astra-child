@@ -91,7 +91,7 @@ get_header();
 						<li><?php esc_html_e( 'Typically 3–5 working days, depending on CIPC processing times', 'bizupkeep-astra-child' ); ?></li>
 					</ul>
 					<p class="bizupkeep-package-cta">
-						<a href="<?php echo esc_url( home_url( '/apply/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
+						<a href="<?php echo esc_url( add_query_arg( 'type', 'new_registration', home_url( '/apply/' ) ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
 					</p>
 				</div>
 
@@ -107,7 +107,7 @@ get_header();
 						<li><?php esc_html_e( 'All three changes — R550', 'bizupkeep-astra-child' ); ?></li>
 					</ul>
 					<p class="bizupkeep-package-cta">
-						<a href="<?php echo esc_url( home_url( '/apply/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
+						<a href="<?php echo esc_url( add_query_arg( 'type', 'company_amendment', home_url( '/apply/' ) ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
 					</p>
 				</div>
 
@@ -120,7 +120,7 @@ get_header();
 						<li><?php esc_html_e( 'We handle the full CIPC submission', 'bizupkeep-astra-child' ); ?></li>
 					</ul>
 					<p class="bizupkeep-package-cta">
-						<a href="<?php echo esc_url( home_url( '/apply/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
+						<a href="<?php echo esc_url( add_query_arg( 'type', 'annual_return', home_url( '/apply/' ) ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
 					</p>
 				</div>
 

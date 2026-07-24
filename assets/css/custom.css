@@ -573,9 +573,18 @@
 }
 
 .bizupkeep-upload-form select,
-.bizupkeep-upload-form input[type="file"] {
+.bizupkeep-upload-form input[type="file"],
+.bizupkeep-upload-form input[type="text"],
+.bizupkeep-upload-form input[type="email"],
+.bizupkeep-upload-form input[type="tel"] {
 	width: 100%;
 	margin-top: 6px;
+	margin-bottom: 14px;
+}
+
+.bizupkeep-upload-form input[disabled] {
+	background: #f3f4f6;
+	color: #6b7280;
 }
 
 /* Apply Page */
@@ -775,6 +784,20 @@
 
 .bizupkeep-applications-inner .bizupkeep-applications-table td {
 	vertical-align: middle;
+}
+
+/* My Profile Page */
+.bizupkeep-profile {
+	padding: 48px 24px;
+}
+
+.bizupkeep-profile-inner {
+	max-width: 480px;
+	margin: 0 auto;
+}
+
+.bizupkeep-profile-form {
+	max-width: none;
 }
 
 /* Responsive */
