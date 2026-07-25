@@ -57,7 +57,11 @@ final class CompanyRegistrationSubmissionTest extends E2ETestCase
         $workflow = $this->db->latestWorkflowForCompany('company_registration', $company['uuid']);
 
         self::assertNotNull($workflow, 'No company_registration workflow instance was created.');
-        self::assertSame('pending_documents', $workflow['status']);
+        self::assertSame(
+            'awaiting_payment',
+            $workflow['status'],
+            'Submitting should now land straight at AwaitingPayment - payment no longer waits on documents being uploaded first.'
+        );
 
         $metadata = json_decode((string) $workflow['metadata'], true);
 

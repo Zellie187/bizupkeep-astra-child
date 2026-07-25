@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.24.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.25.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -781,6 +781,102 @@ function bizupkeep_child_handle_apply_submission(): void {
 }
 
 /**
+ * Advance a freshly-started Company Registration/Amendment straight
+ * from Created to AwaitingPayment in one go, instead of the old
+ * "wait for documents first" gate - a client can now pay the moment
+ * they submit, and upload supporting documents any time before or
+ * after (see bizupkeep_child_applications_sections()'s can_upload
+ * logic, which no longer requires PendingDocuments specifically).
+ *
+ * The workflow engine itself has no document-count requirement of its
+ * own to work around here: verify_documents' guard only checks that
+ * the caller passes documents_verified === true (see
+ * CompanyRegistrationGuard::guardVerifyDocuments()/
+ * CompanyAmendmentGuard's equivalent) - "wait for real documents" was
+ * always a theme-level policy choice
+ * (bizupkeep_child_maybe_verify_documents()), not something the
+ * engine enforced. That function is left untouched and still finishes
+ * out any application already sitting at PendingDocuments from before
+ * this change; it simply never has anything to do for a newly
+ * submitted one, since this advances straight past that status.
+ *
+ * request_documents still fires first purely so the transition
+ * history a staff member sees on Quality Review keeps recording it -
+ * all three actions land in the same request, just with no real gap
+ * in time between them. $requestDocumentsReason defaults to a generic
+ * note but lets a caller record something more specific as that first
+ * transition's reason - bizupkeep_child_submit_company_amendment()
+ * passes the client's free-text "anything else we should know" notes
+ * through here, the only place that field has ever been recorded
+ * (Company Registration's own notes go into the workflow's
+ * client_notes metadata instead - a separate, unrelated mechanism).
+ */
+function bizupkeep_child_advance_to_awaiting_payment( WorkflowTypeServiceInterface $service, string $workflow_uuid, int $wp_user_id, string $requestDocumentsReason = '' ): void {
+	$service->performAction(
+		$workflow_uuid,
+		'request_documents',
+		$wp_user_id,
+		'' !== $requestDocumentsReason ? $requestDocumentsReason : __( 'Documents requested automatically at application submission.', 'bizupkeep-astra-child' )
+	);
+
+	$service->performAction(
+		$workflow_uuid,
+		'verify_documents',
+		$wp_user_id,
+		__( 'Payment requested immediately at submission - supporting documents can be uploaded separately, any time, via My Applications.', 'bizupkeep-astra-child' ),
+		array( 'documents_verified' => true )
+	);
+
+	$service->performAction(
+		$workflow_uuid,
+		'request_payment',
+		$wp_user_id,
+		__( 'Payment requested automatically at application submission.', 'bizupkeep-astra-child' )
+	);
+}
+
+/**
+ * Email a client a direct payment link plus a documents reminder
+ * immediately after submitting a Company Registration or Company
+ * Amendment application - the same "Pay Now" URL My Applications
+ * shows, sent straight to their inbox so they don't have to log in
+ * just to find it. A plain wp_mail() call rather than routed through
+ * bizupkeep-workflow's own WorkflowNotificationListener/
+ * config/notifications.php: that system has no concept of a
+ * WooCommerce URL (a theme-level detail) and already fires its own
+ * generic per-action notification alongside this one for the in-app
+ * feed - this is the richer, actually-clickable counterpart.
+ */
+function bizupkeep_child_send_submission_payment_email( int $wp_user_id, string $workflow_type_label, string $company_identifier, string $pay_url ): void {
+	$wp_user = get_userdata( $wp_user_id );
+
+	if ( ! $wp_user ) {
+		return;
+	}
+
+	$subject = sprintf(
+		/* translators: %s: workflow type label, e.g. "Company Registration" */
+		__( 'Payment required - %s application received', 'bizupkeep-astra-child' ),
+		$workflow_type_label
+	);
+
+	$body = sprintf(
+		/* translators: 1: client's first name, 2: workflow type label, 3: company identifier, 4: Pay Now URL, 5: My Applications URL */
+		__(
+			"Hi %1\$s,\n\nThanks for submitting your %2\$s application for %3\$s.\n\nYou can pay for it right away here:\n%4\$s\n\nYou can also log in and upload your supporting documents (ID document, and any signed forms we generate for you) any time before or after paying, from your Client Portal:\n%5\$s\n\nWe'll be in touch once everything is in.\n",
+			'bizupkeep-astra-child'
+		),
+		'' !== $wp_user->first_name ? $wp_user->first_name : $wp_user->display_name,
+		$workflow_type_label,
+		$company_identifier,
+		$pay_url,
+		home_url( '/client-portal/client-portal-applications/' )
+	);
+
+	wp_mail( $wp_user->user_email, $subject, $body );
+}
+
+/**
  * Create and submit a New Company Registration application. Returns
  * false (rather than throwing) on any failure, so the caller can show
  * a generic "something went wrong" state - this runs from a public-
@@ -891,16 +987,16 @@ function bizupkeep_child_submit_new_registration( int $wp_user_id, string $notes
 
 		$instance = $registration->start( $company_uuid, $wp_user_id, $metadata );
 
-		// Move Created -> PendingDocuments immediately: the moment an
-		// application is submitted, the client IS being asked for
-		// documents (that's what the My Documents page does next) - so
-		// there's no separate "someone decides to request documents"
-		// step to wait for here.
-		$registration->performAction(
-			$instance->getUuid(),
-			CompanyRegistrationDefinition::ACTION_REQUEST_DOCUMENTS,
+		// Straight to AwaitingPayment - the client can pay immediately
+		// and submit supporting documents separately, any time. See
+		// bizupkeep_child_advance_to_awaiting_payment()'s docblock.
+		bizupkeep_child_advance_to_awaiting_payment( $registration, $instance->getUuid(), $wp_user_id );
+
+		bizupkeep_child_send_submission_payment_email(
 			$wp_user_id,
-			__( 'Documents requested automatically at application submission.', 'bizupkeep-astra-child' )
+			__( 'Company Registration', 'bizupkeep-astra-child' ),
+			$proposed_names[0],
+			bizupkeep_child_registration_payment_url( $instance->getUuid() )
 		);
 	} catch ( \Throwable $e ) {
 		return false;
@@ -990,14 +1086,16 @@ function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $note
 		$amendments = bizhub()->container()->get( CompanyAmendmentService::class );
 		$instance   = $amendments->start( $company_uuid, $wp_user_id, $amendment_types, $proposed_names, $director_changes, $new_address );
 
-		// Same immediate-document-request pattern as Company
-		// Registration: submitting the application is itself the
-		// trigger to start collecting supporting documents.
-		$amendments->performAction(
-			$instance->getUuid(),
-			CompanyAmendmentDefinition::ACTION_REQUEST_DOCUMENTS,
+		// Straight to AwaitingPayment - the client can pay immediately
+		// and submit supporting documents separately, any time. See
+		// bizupkeep_child_advance_to_awaiting_payment()'s docblock.
+		bizupkeep_child_advance_to_awaiting_payment( $amendments, $instance->getUuid(), $wp_user_id, $notes );
+
+		bizupkeep_child_send_submission_payment_email(
 			$wp_user_id,
-			$notes
+			__( 'Company Amendment', 'bizupkeep-astra-child' ),
+			$company->getCompanyName(),
+			bizupkeep_child_amendment_payment_url( $instance->getUuid() )
 		);
 	} catch ( \Throwable $e ) {
 		return false;
@@ -1682,6 +1780,27 @@ const BIZUPKEEP_REQUIRED_DOCUMENT_CATEGORIES = array(
 );
 
 /**
+ * Every status a Company Registration/Amendment can be in while
+ * document upload should still be offered on My Applications -
+ * everything before a final outcome, now that payment no longer
+ * waits on documents being in first (see
+ * bizupkeep_child_advance_to_awaiting_payment()). A client can submit
+ * documents before paying, after paying, or while staff are already
+ * processing/reviewing the application - whichever order suits them.
+ * Deliberately excludes Completed/Archived/Cancelled/Rejected: once
+ * an application has a final outcome, there's nothing left to upload
+ * documents against.
+ */
+const BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES = array(
+	WorkflowStatus::PendingDocuments,
+	WorkflowStatus::DocumentsVerified,
+	WorkflowStatus::AwaitingPayment,
+	WorkflowStatus::Processing,
+	WorkflowStatus::QualityReview,
+	WorkflowStatus::NamesRejected,
+);
+
+/**
  * Company Amendment additionally requires a signed Resolution Letter
  * and Minutes of Meeting (see bizupkeep_child_render_resolution_document()/
  * bizupkeep_child_render_minutes_document()) - a board resolution
@@ -1806,10 +1925,14 @@ function bizupkeep_child_process_document_upload( int $wp_user_id, string $workf
 		return false;
 	}
 
-	// Only accept uploads while this specific application is actually
-	// waiting on documents - not before (just created, nothing
-	// requested yet) and not after (already verified/moved on).
-	if ( WorkflowStatus::PendingDocuments !== $workflow->getStatus() ) {
+	// Only accept uploads while this specific application is still
+	// somewhere between "documents requested" and a final outcome -
+	// not before (just created, nothing requested yet) and not after
+	// (Completed/Archived/Cancelled/Rejected). See
+	// BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES's docblock for why this is no
+	// longer just PendingDocuments now that payment doesn't wait on
+	// documents being in first.
+	if ( ! in_array( $workflow->getStatus(), BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES, true ) ) {
 		return false;
 	}
 
@@ -3513,7 +3636,7 @@ function bizupkeep_child_applications_sections( int $wp_user_id ): array {
 				$documents->getDocumentsForOwner( 'company', $row['company']->getUuid() )
 			);
 
-			$can_upload = WorkflowStatus::PendingDocuments === $instance->getStatus();
+			$can_upload = in_array( $instance->getStatus(), BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES, true );
 
 			if ( in_array( $instance->getWorkflowType(), array( CompanyRegistrationDefinition::TYPE, CompanyAmendmentDefinition::TYPE ), true ) ) {
 				$poa_url = bizupkeep_child_poa_url( $instance->getUuid() );

@@ -198,6 +198,7 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 										<?php endif; ?>
 
 										<?php if ( $section['can_upload'] ) : ?>
+											<p class="bizupkeep-field-hint"><?php esc_html_e( 'You can upload these before or after paying, whenever suits you - payment does not wait on documents being submitted.', 'bizupkeep-astra-child' ); ?></p>
 											<form method="post" enctype="multipart/form-data" class="bizupkeep-upload-form">
 												<?php wp_nonce_field( 'bizupkeep_upload_document', 'bizupkeep_upload_nonce' ); ?>
 												<input type="hidden" name="workflow_uuid" value="<?php echo esc_attr( $section['workflow_uuid'] ); ?>">

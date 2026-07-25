@@ -71,7 +71,11 @@ final class CompanyAmendmentSubmissionTest extends E2ETestCase
         $workflow = $this->db->latestWorkflowForCompany('company_amendment', $company['uuid']);
 
         self::assertNotNull($workflow, 'No company_amendment workflow instance was created.');
-        self::assertSame('pending_documents', $workflow['status']);
+        self::assertSame(
+            'awaiting_payment',
+            $workflow['status'],
+            'Submitting should now land straight at AwaitingPayment - payment no longer waits on documents being uploaded first.'
+        );
 
         $metadata = json_decode((string) $workflow['metadata'], true);
 

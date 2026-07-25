@@ -38,7 +38,7 @@ final class DocumentUploadTest extends E2ETestCase
 
     public function test_uploading_id_document_stores_it_against_the_application(): void
     {
-        $workflowUuid = $this->startAPendingDocumentsRegistration();
+        $workflowUuid = $this->startARegistrationReadyForDocuments();
 
         $documentsPage = $this->http->get('/client-portal/client-portal-documents/');
         $nonce = $documentsPage->nonce('bizupkeep_upload_nonce');
@@ -88,12 +88,14 @@ final class DocumentUploadTest extends E2ETestCase
     }
 
     /**
-     * Submit a fresh registration and return its workflow UUID -
-     * bizupkeep_child_submit_new_registration() fires
-     * ACTION_REQUEST_DOCUMENTS immediately, so the result is already
-     * in PendingDocuments and ready for an upload.
+     * Submit a fresh registration and return its workflow UUID - it
+     * lands straight at AwaitingPayment now (see
+     * bizupkeep_child_advance_to_awaiting_payment()), but document
+     * upload stays available regardless of status
+     * (BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES), so this is still ready for
+     * an upload immediately either way.
      */
-    private function startAPendingDocumentsRegistration(): string
+    private function startARegistrationReadyForDocuments(): string
     {
         $applyPage = $this->http->get('/apply/');
         $nonce = $applyPage->nonce('bizupkeep_apply_nonce');
@@ -117,7 +119,7 @@ final class DocumentUploadTest extends E2ETestCase
 
         $workflow = $this->db->latestWorkflowForCompany('company_registration', $company['uuid']);
         self::assertNotNull($workflow, 'Fixture registration did not create a workflow.');
-        self::assertSame('pending_documents', $workflow['status']);
+        self::assertSame('awaiting_payment', $workflow['status']);
 
         return $workflow['uuid'];
     }

@@ -8,17 +8,16 @@ use BizUpKeep\Tests\E2E\Support\E2ETestCase;
 
 /**
  * Covers the Company Amendment "Pay Now" flow end to end over real
- * HTTP: submit an amendment, upload all four required documents (which
- * auto-chains verify_documents -> request_payment, landing the
- * workflow at AwaitingPayment - see
- * bizupkeep_child_maybe_verify_documents()/
- * bizupkeep_child_required_document_categories()), then follow the
- * payment link and confirm it lands on a real WooCommerce checkout
- * with the ONE product matching this amendment's exact
- * amendment_types - the fix for the pricing gap the user asked about
- * directly (a client bundling several change types could otherwise
- * pick any product, with no connection to what was actually
- * requested).
+ * HTTP: submit an amendment (which now lands straight at
+ * AwaitingPayment - see bizupkeep_child_advance_to_awaiting_payment()),
+ * upload all four required documents anyway to prove that still works
+ * even though it's no longer what unlocks payment
+ * (BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES), then follow the payment link
+ * and confirm it lands on a real WooCommerce checkout with the ONE
+ * product matching this amendment's exact amendment_types - the fix
+ * for the pricing gap the user asked about directly (a client
+ * bundling several change types could otherwise pick any product,
+ * with no connection to what was actually requested).
  */
 final class PaymentFlowTest extends E2ETestCase
 {
@@ -80,9 +79,11 @@ final class PaymentFlowTest extends E2ETestCase
     }
 
     /**
-     * Submit an address-only amendment and upload all four required
-     * documents, mirroring the real client journey through to
-     * AwaitingPayment. Returns the workflow UUID.
+     * Submit an address-only amendment (already AwaitingPayment on its
+     * own by the time this returns) and upload all four required
+     * documents anyway, mirroring a real client journey that submits
+     * documents alongside paying rather than instead of it. Returns
+     * the workflow UUID.
      */
     private function startAnAddressOnlyAmendmentAwaitingPayment(): string
     {
@@ -124,7 +125,11 @@ final class PaymentFlowTest extends E2ETestCase
 
         $workflow = $this->db->latestWorkflowForCompany('company_amendment', $company['uuid']);
         self::assertNotNull($workflow, 'Fixture amendment did not create a workflow.');
-        self::assertSame('pending_documents', $workflow['status']);
+        self::assertSame(
+            'awaiting_payment',
+            $workflow['status'],
+            'Submitting should now land straight at AwaitingPayment - payment no longer waits on documents being uploaded first.'
+        );
 
         $documentsPage = $this->http->get('/client-portal/client-portal-documents/');
         $uploadNonce = $documentsPage->nonce('bizupkeep_upload_nonce');
@@ -186,7 +191,7 @@ final class PaymentFlowTest extends E2ETestCase
         self::assertSame(
             'awaiting_payment',
             $updated['status'],
-            'Uploading all four required documents should auto-advance to AwaitingPayment.'
+            'Uploading documents should not have moved the workflow off AwaitingPayment (it landed there at submission already).'
         );
 
         return $workflow['uuid'];
