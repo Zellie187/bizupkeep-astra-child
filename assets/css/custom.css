@@ -52,6 +52,57 @@
 	color: var(--bizupkeep-accent);
 }
 
+/* Dropdown submenus, e.g. the "Client Portal" item's Dashboard/My
+   Companies/My Documents/My Applications/My Profile children (see
+   bizupkeep_child_sync_client_portal_menu() in functions.php). Shown
+   on hover/focus for desktop and toggled via .is-open (set by
+   assets/js/custom.js) for touch devices, where :hover doesn't apply. */
+.bizupkeep-menu li.menu-item-has-children {
+	position: relative;
+}
+
+.bizupkeep-menu .sub-menu {
+	display: none;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	min-width: 200px;
+	margin: 0;
+	padding: 6px;
+	list-style: none;
+	background: #ffffff;
+	border: 1px solid #e5e7eb;
+	border-radius: 0 6px 6px 6px;
+	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+	z-index: 100;
+}
+
+.bizupkeep-menu .sub-menu li {
+	width: 100%;
+	margin: 0;
+}
+
+.bizupkeep-menu .sub-menu a {
+	white-space: nowrap;
+	padding: 8px 12px;
+	border-radius: 4px;
+}
+
+.bizupkeep-menu li.menu-item-has-children:hover > .sub-menu,
+.bizupkeep-menu li.menu-item-has-children:focus-within > .sub-menu,
+.bizupkeep-menu li.menu-item-has-children.is-open > .sub-menu {
+	display: block;
+}
+
+@media (max-width: 768px) {
+	.bizupkeep-menu .sub-menu {
+		position: static;
+		box-shadow: none;
+		border: none;
+		background: var(--bizupkeep-bg-light);
+	}
+}
+
 .bizupkeep-menu-toggle {
 	display: none;
 	background: none;
@@ -424,100 +475,6 @@
 	text-align: center;
 }
 
-/* Client Portal Bar */
-.bizupkeep-portal-bar {
-	background: var(--bizupkeep-primary);
-}
-
-.bizupkeep-portal-menu {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 4px;
-	max-width: 1200px;
-	margin: 0 auto;
-	padding: 0 24px;
-	list-style: none;
-}
-
-.bizupkeep-portal-menu li {
-	margin: 0;
-}
-
-.bizupkeep-portal-menu a {
-	display: block;
-	padding: 10px 14px;
-	color: #ffffff;
-	text-decoration: none;
-	font-size: 13px;
-	font-weight: 600;
-	letter-spacing: 0.01em;
-	border-radius: 4px;
-	transition: background-color 0.15s ease;
-}
-
-.bizupkeep-portal-menu a:hover,
-.bizupkeep-portal-menu a:focus {
-	background: rgba(255, 255, 255, 0.15);
-}
-
-.bizupkeep-portal-menu .current-menu-item > a {
-	background: var(--bizupkeep-accent);
-}
-
-/* Client Portal dropdown - the parent "Client Portal" item's five
-   children (see bizupkeep_child_sync_client_portal_menu()), shown on
-   hover/focus for desktop and toggled via .is-open (set by
-   assets/js/custom.js) for touch devices, where :hover doesn't apply. */
-.bizupkeep-portal-menu li.menu-item-has-children {
-	position: relative;
-}
-
-.bizupkeep-portal-menu .sub-menu {
-	display: none;
-	position: absolute;
-	top: 100%;
-	left: 0;
-	min-width: 200px;
-	margin: 0;
-	padding: 6px;
-	list-style: none;
-	background: var(--bizupkeep-primary);
-	border-radius: 0 6px 6px 6px;
-	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
-	z-index: 100;
-}
-
-.bizupkeep-portal-menu .sub-menu li {
-	width: 100%;
-}
-
-.bizupkeep-portal-menu .sub-menu a {
-	white-space: nowrap;
-}
-
-.bizupkeep-portal-menu li.menu-item-has-children:hover > .sub-menu,
-.bizupkeep-portal-menu li.menu-item-has-children:focus-within > .sub-menu,
-.bizupkeep-portal-menu li.menu-item-has-children.is-open > .sub-menu {
-	display: block;
-}
-
-@media (max-width: 768px) {
-	.bizupkeep-portal-menu {
-		padding: 4px 12px;
-	}
-
-	.bizupkeep-portal-menu a {
-		padding: 8px 10px;
-	}
-
-	.bizupkeep-portal-menu .sub-menu {
-		position: static;
-		box-shadow: none;
-		border-radius: 4px;
-		background: rgba(0, 0, 0, 0.15);
-	}
-}
 
 /* Member Portal */
 .bizupkeep-status-pill {

@@ -19,15 +19,16 @@
 	} );
 
 	/**
-	 * Client Portal dropdown: :hover opens it on desktop (see
-	 * custom.css), but touch devices have no hover state, so on those
-	 * (or narrow viewports, matching custom.css's 768px breakpoint) a
-	 * tap on the "Client Portal" parent link toggles .is-open instead
-	 * of following the link straight to the dashboard - a second tap
-	 * (or tapping elsewhere) opens/closes it. Desktop mouse clicks are
-	 * left alone entirely, since hover already shows the dropdown
-	 * there and intercepting the first click would make the parent
-	 * link itself require two clicks to follow.
+	 * Main menu dropdowns (e.g. the "Client Portal" item's Dashboard/My
+	 * Companies/My Documents/My Applications/My Profile children): :hover
+	 * opens them on desktop (see custom.css), but touch devices have no
+	 * hover state, so on those (or narrow viewports, matching custom.css's
+	 * 768px breakpoint) a tap on a parent link toggles .is-open instead
+	 * of following the link straight through - a second tap (or tapping
+	 * elsewhere) opens/closes it. Desktop mouse clicks are left alone
+	 * entirely, since hover already shows the dropdown there and
+	 * intercepting the first click would make the parent link itself
+	 * require two clicks to follow.
 	 */
 	document.addEventListener( 'DOMContentLoaded', function () {
 		var noHover = window.matchMedia( '(hover: none), (max-width: 768px)' );
@@ -36,7 +37,7 @@
 			return;
 		}
 
-		var parents = document.querySelectorAll( '.bizupkeep-portal-menu > li.menu-item-has-children' );
+		var parents = document.querySelectorAll( '.bizupkeep-menu > li.menu-item-has-children' );
 
 		parents.forEach( function ( parent ) {
 			var link = parent.querySelector( ':scope > a' );

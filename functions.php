@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.25.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.26.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -98,9 +98,8 @@ function bizupkeep_child_setup(): void {
 
 	register_nav_menus(
 		array(
-			'bizupkeep-primary'       => __( 'Primary Menu', 'bizupkeep-astra-child' ),
-			'bizupkeep-footer'        => __( 'Footer Menu', 'bizupkeep-astra-child' ),
-			'bizupkeep-client-portal' => __( 'Client Portal Menu', 'bizupkeep-astra-child' ),
+			'bizupkeep-primary' => __( 'Primary Menu', 'bizupkeep-astra-child' ),
+			'bizupkeep-footer'  => __( 'Footer Menu', 'bizupkeep-astra-child' ),
 		)
 	);
 }
@@ -133,17 +132,40 @@ add_action( 'widgets_init', 'bizupkeep_child_widgets_init' );
  * set of placeholder Pages - styled with the Member Portal classes
  * already defined in assets/css/custom.css rather than plain text, so
  * they read as part of the site instead of a bolted-on stub - plus a
- * menu linking them. The dashboard entry reuses the existing
- * "Client Portal" page (already published and linked in the primary
- * menu) rather than creating a competing one; the other four pages
- * nest underneath it. Swap each page's content for a real template
- * (or a shortcode backed by those REST endpoints, the same pattern
- * [bizupkeep_packages] already uses on the homepage) as the portal
- * front-end gets built - the menu links to the pages by ID, not
- * hardcoded markup, so nothing here needs to change to support that.
+ * "Client Portal" dropdown (Dashboard/My Companies/My Documents/My
+ * Applications/My Profile) added directly into the site's main menu
+ * (see bizupkeep_child_sync_client_portal_menu()), rather than a
+ * second nav bar of its own. The dashboard entry reuses the existing
+ * "Client Portal" page rather than creating a competing one; the
+ * other four pages nest underneath it. Swap each page's content for a
+ * real template (or a shortcode backed by those REST endpoints, the
+ * same pattern [bizupkeep_packages] already uses on the homepage) as
+ * the portal front-end gets built - the menu links to the pages by
+ * ID, not hardcoded markup, so nothing here needs to change to
+ * support that.
  */
 
 add_action( 'after_switch_theme', 'bizupkeep_child_setup_client_portal' );
+add_action( 'init', 'bizupkeep_child_maybe_migrate_client_portal_menu' );
+
+/**
+ * One-time migration for sites that activated the theme before the
+ * separate "Client Portal" utility bar was retired in favour of
+ * folding its items into the main menu: bizupkeep_child_setup_client_portal()
+ * only runs on after_switch_theme, which doesn't fire again just from
+ * deploying updated theme files, so this re-runs it once via a
+ * stored option flag to actually move the items over on an already-
+ * active site.
+ */
+function bizupkeep_child_maybe_migrate_client_portal_menu(): void {
+	if ( get_option( 'bizupkeep_child_portal_menu_migrated' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_client_portal();
+
+	update_option( 'bizupkeep_child_portal_menu_migrated', '1' );
+}
 
 /**
  * Idempotently create the client portal placeholder pages and nav
@@ -314,13 +336,50 @@ function bizupkeep_child_portal_table_placeholder( string $table_class, string $
 }
 
 /**
- * Create (or reuse) the "Client Portal" nav menu with a single
- * top-level "Client Portal" item, and nest Dashboard/My Companies/
- * My Documents/My Applications/My Profile underneath it as a dropdown
- * - rather than each getting its own top-level slot, which is how
- * this used to render (see bizupkeep_child_render_portal_nav()'s
- * depth argument for the other half of this change). Assigns the
- * menu to the client portal menu location.
+ * Find the menu currently assigned to the 'bizupkeep-primary' theme
+ * location (the site's actual main menu, managed by whoever set up
+ * Appearance > Menus), or create and assign an empty one if the site
+ * doesn't have one yet - e.g. straight after theme activation, before
+ * an admin has visited that screen. The Client Portal items are added
+ * into this menu rather than a menu of their own, so they show up as
+ * a dropdown inside the existing main navigation instead of a second
+ * nav bar.
+ */
+function bizupkeep_child_get_or_create_primary_menu(): int {
+	$locations = get_theme_mod( 'nav_menu_locations', array() );
+
+	if ( ! empty( $locations['bizupkeep-primary'] ) ) {
+		$menu = wp_get_nav_menu_object( (int) $locations['bizupkeep-primary'] );
+
+		if ( $menu ) {
+			return $menu->term_id;
+		}
+	}
+
+	$menu_name = __( 'Primary Menu', 'bizupkeep-astra-child' );
+	$menu      = wp_get_nav_menu_object( $menu_name );
+
+	if ( ! $menu ) {
+		$menu_id = wp_create_nav_menu( $menu_name );
+
+		if ( is_wp_error( $menu_id ) ) {
+			return 0;
+		}
+	} else {
+		$menu_id = $menu->term_id;
+	}
+
+	$locations['bizupkeep-primary'] = $menu_id;
+	set_theme_mod( 'nav_menu_locations', $locations );
+
+	return $menu_id;
+}
+
+/**
+ * Add a single top-level "Client Portal" item to the site's main menu,
+ * and nest Dashboard/My Companies/My Documents/My Applications/My
+ * Profile underneath it as a dropdown - rather than each getting its
+ * own top-level slot, or a separate menu/nav-bar of their own.
  *
  * The parent item is a *custom* link (to the dashboard page's URL),
  * not a page-object item pointing at $dashboard_id - Dashboard is
@@ -336,17 +395,10 @@ function bizupkeep_child_portal_table_placeholder( string $table_class, string $
  *                                                                 the order they should appear.
  */
 function bizupkeep_child_sync_client_portal_menu( int $dashboard_id, array $menu_targets ): void {
-	$menu_name = __( 'Client Portal', 'bizupkeep-astra-child' );
-	$menu      = wp_get_nav_menu_object( $menu_name );
+	$menu_id = bizupkeep_child_get_or_create_primary_menu();
 
-	if ( ! $menu ) {
-		$menu_id = wp_create_nav_menu( $menu_name );
-
-		if ( is_wp_error( $menu_id ) ) {
-			return;
-		}
-	} else {
-		$menu_id = $menu->term_id;
+	if ( 0 === $menu_id ) {
+		return;
 	}
 
 	$existing_items = wp_get_nav_menu_items( $menu_id ) ?: array();
@@ -369,6 +421,18 @@ function bizupkeep_child_sync_client_portal_menu( int $dashboard_id, array $menu
 	}
 
 	if ( null === $parent_item ) {
+		// Appended after whatever's already in the menu (e.g. Home,
+		// Services, Contact) rather than forced to position 1, since
+		// this is now the site's real main menu, not a menu built
+		// from scratch for this item alone.
+		$top_level_count = 0;
+
+		foreach ( $existing_items as $item ) {
+			if ( 0 === (int) $item->menu_item_parent ) {
+				$top_level_count++;
+			}
+		}
+
 		$parent_menu_item_id = wp_update_nav_menu_item(
 			$menu_id,
 			0,
@@ -378,7 +442,7 @@ function bizupkeep_child_sync_client_portal_menu( int $dashboard_id, array $menu
 				'menu-item-type'      => 'custom',
 				'menu-item-status'    => 'publish',
 				'menu-item-parent-id' => 0,
-				'menu-item-position'  => 1,
+				'menu-item-position'  => $top_level_count + 1,
 			)
 		);
 
@@ -435,41 +499,7 @@ function bizupkeep_child_sync_client_portal_menu( int $dashboard_id, array $menu
 			)
 		);
 	}
-
-	$locations = get_theme_mod( 'nav_menu_locations', array() );
-
-	if ( empty( $locations['bizupkeep-client-portal'] ) ) {
-		$locations['bizupkeep-client-portal'] = $menu_id;
-		set_theme_mod( 'nav_menu_locations', $locations );
-	}
 }
-
-/**
- * Render the client portal menu as a slim utility bar above the main
- * site header. depth => 2 (one level of children) lets the "Client
- * Portal" parent item's five children render as a dropdown - see
- * bizupkeep_child_sync_client_portal_menu() for how that structure is
- * built. Dropdown open/close is handled by .bizupkeep-portal-menu's
- * CSS (hover/focus) plus the tap-to-toggle JS in assets/js/custom.js,
- * since :hover alone doesn't work on touch devices.
- */
-function bizupkeep_child_render_portal_nav(): void {
-	if ( ! has_nav_menu( 'bizupkeep-client-portal' ) ) {
-		return;
-	}
-
-	wp_nav_menu(
-		array(
-			'theme_location'  => 'bizupkeep-client-portal',
-			'container'       => 'div',
-			'container_class' => 'bizupkeep-portal-bar',
-			'menu_class'      => 'bizupkeep-portal-menu',
-			'fallback_cb'     => false,
-			'depth'           => 2,
-		)
-	);
-}
-add_action( 'wp_body_open', 'bizupkeep_child_render_portal_nav' );
 
 /**
  * Client Portal access control and account linking.
