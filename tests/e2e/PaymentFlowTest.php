@@ -66,18 +66,17 @@ final class PaymentFlowTest extends E2ETestCase
             'Expected the payment link to land on checkout; got: ' . $response->finalUrl
         );
         self::assertStringContainsString(
-            'Company Amendment - Address Change',
+            'Address Change',
             $response->body,
             'Checkout does not show the product matching this amendment\'s exact change type.'
         );
 
         $product = $this->db->fetchOne(
-            "SELECT p.ID FROM " . $this->db->table('posts') . " p
-             INNER JOIN " . $this->db->table('postmeta') . " pm ON pm.post_id = p.ID
-             WHERE pm.meta_key = '_sku' AND pm.meta_value = 'bizupkeep-amendment-address'"
+            "SELECT ID FROM " . $this->db->table('posts') . "
+             WHERE post_type = 'product' AND post_name = 'address-change'"
         );
 
-        self::assertNotNull($product, 'The bizupkeep-amendment-address product was never created.');
+        self::assertNotNull($product, 'The real "address-change" product does not exist on this environment - see BIZUPKEEP_AMENDMENT_PRODUCT_SLUGS.');
     }
 
     /**
