@@ -34,7 +34,7 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.23.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.24.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -527,9 +527,14 @@ function bizupkeep_child_is_client_portal_page(): bool {
 /**
  * Find or create the BizHub Client record linked to a WordPress
  * user. Safe to call on every portal page load: the lookup is
- * idempotent, and this does nothing if BizHub isn't active.
+ * idempotent, and this does nothing if BizHub isn't active. $phone is
+ * only used the first time a client record is created for this user -
+ * bizupkeep_child_handle_apply_submission() passes through whatever a
+ * brand new guest applicant just typed into the apply form's "Your
+ * Details" fieldset, since that's otherwise the only place this phone
+ * number would ever be captured.
  */
-function bizupkeep_child_ensure_client_record( int $wp_user_id ): void {
+function bizupkeep_child_ensure_client_record( int $wp_user_id, string $phone = '' ): void {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
 		return;
 	}
@@ -557,12 +562,92 @@ function bizupkeep_child_ensure_client_record( int $wp_user_id ): void {
 			new ClientData(
 				wp_generate_uuid4(),
 				$wp_user_id,
-				new ProfileData( $first_name, $last_name, '', get_avatar_url( $wp_user_id ) )
+				new ProfileData( $first_name, $last_name, $phone, get_avatar_url( $wp_user_id ) )
 			)
 		);
 	} catch ( InvalidArgumentException $e ) {
 		// Another request created it first (race), or invalid data - either way, nothing more to do here.
 	}
+}
+
+/**
+ * Silently register and log in a brand new WordPress account for a
+ * guest apply-form submission, using the name/email/phone posted
+ * alongside it (template-apply.php's "Your Details" fieldset, shown
+ * only when logged out) - so a client never has to go through a
+ * separate "create an account" step before applying. Returns the new
+ * user's ID on success, logged in via the same auth cookie a normal
+ * login sets (so nothing downstream needs to know the difference), or
+ * 0 on any failure - missing/invalid fields, or (see below) an email
+ * that's already registered.
+ *
+ * An email already belonging to an existing account is refused
+ * outright rather than silently reused or logged into: trusting a
+ * bare posted email address to mean "this is that account's owner"
+ * would let anyone submit an application as any existing client just
+ * by typing their address. The caller shows a specific "please log in
+ * first" error for this case - bizupkeep_child_handle_apply_submission()
+ * tells the two failure modes apart by checking email_exists() again
+ * itself before calling this.
+ */
+function bizupkeep_child_register_guest_applicant(): int {
+	$first_name = isset( $_POST['guest_first_name'] ) ? sanitize_text_field( wp_unslash( $_POST['guest_first_name'] ) ) : '';
+	$last_name  = isset( $_POST['guest_last_name'] ) ? sanitize_text_field( wp_unslash( $_POST['guest_last_name'] ) ) : '';
+	$email      = isset( $_POST['guest_email'] ) ? sanitize_email( wp_unslash( $_POST['guest_email'] ) ) : '';
+
+	if ( '' === $first_name || '' === $last_name || '' === $email || ! is_email( $email ) || email_exists( $email ) ) {
+		return 0;
+	}
+
+	$user_id = wp_insert_user(
+		array(
+			'user_login'   => bizupkeep_child_unique_username_from_email( $email ),
+			'user_email'   => $email,
+			'user_pass'    => wp_generate_password( 20, true ),
+			'first_name'   => $first_name,
+			'last_name'    => $last_name,
+			'display_name' => trim( "$first_name $last_name" ),
+			'role'         => 'subscriber',
+		)
+	);
+
+	if ( is_wp_error( $user_id ) ) {
+		return 0;
+	}
+
+	// A reset-your-password link, never the random password itself -
+	// WordPress' own standard mechanism for "here's an account we made
+	// you, come set a password whenever you like."
+	wp_new_user_notification( $user_id, null, 'user' );
+
+	wp_set_current_user( $user_id );
+	wp_set_auth_cookie( $user_id );
+
+	return $user_id;
+}
+
+/**
+ * Derive a unique WordPress username from an email address's local
+ * part (before the @), falling back to "client" if sanitizing leaves
+ * nothing usable, and appending a numeric suffix until it no longer
+ * collides with an existing username. Used only by
+ * bizupkeep_child_register_guest_applicant(), since usernames still
+ * have to be unique even though this account is otherwise identified
+ * by email everywhere that matters.
+ */
+function bizupkeep_child_unique_username_from_email( string $email ): string {
+	$base = sanitize_user( (string) strtok( $email, '@' ), true );
+	$base = '' !== $base ? $base : 'client';
+
+	$username = $base;
+	$suffix   = 1;
+
+	while ( username_exists( $username ) ) {
+		++$suffix;
+		$username = $base . $suffix;
+	}
+
+	return $username;
 }
 
 /**
@@ -637,12 +722,15 @@ add_action( 'template_redirect', 'bizupkeep_child_handle_apply_submission' );
  * (before the page template renders) so it can redirect on success or
  * failure - the template itself only ever handles GET display.
  *
- * Dispatches to one of three handlers based on the posted
- * "application_type" (New Registration / Company Amendment / Annual
- * Return - see template-apply.php's radio buttons), each of which
- * starts the matching bizupkeep-workflow workflow type directly via
- * the shared container, the same pattern already used for Company
- * Registration.
+ * No login is required to submit: a guest is silently registered and
+ * logged in first (see bizupkeep_child_register_guest_applicant()),
+ * using the name/email/phone posted alongside the rest of the form -
+ * an already-logged-in client just uses their existing account as
+ * before. Either way, by the time this dispatches to one of the three
+ * per-type submit handlers below (New Registration / Company Amendment
+ * / Annual Return - see template-apply.php's radio buttons), a real
+ * WordPress user is guaranteed, so those handlers don't need to know
+ * whether the client just registered or has had an account for years.
  */
 function bizupkeep_child_handle_apply_submission(): void {
 	if ( ! isset( $_POST['bizupkeep_apply_nonce'] ) ) {
@@ -653,18 +741,28 @@ function bizupkeep_child_handle_apply_submission(): void {
 		return;
 	}
 
-	if ( ! is_user_logged_in() ) {
-		wp_safe_redirect( wp_login_url( get_permalink() ) );
-		exit;
-	}
-
 	check_admin_referer( 'bizupkeep_apply', 'bizupkeep_apply_nonce' );
 
-	$wp_user_id        = get_current_user_id();
+	$guest_phone = isset( $_POST['guest_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['guest_phone'] ) ) : '';
+
+	if ( is_user_logged_in() ) {
+		$wp_user_id = get_current_user_id();
+	} else {
+		$guest_email = isset( $_POST['guest_email'] ) ? sanitize_email( wp_unslash( $_POST['guest_email'] ) ) : '';
+		$wp_user_id  = bizupkeep_child_register_guest_applicant();
+
+		if ( 0 === $wp_user_id ) {
+			$error = ( '' !== $guest_email && email_exists( $guest_email ) ) ? 'email_exists' : '1';
+
+			wp_safe_redirect( add_query_arg( 'apply_error', $error, get_permalink() ) );
+			exit;
+		}
+	}
+
 	$application_type  = isset( $_POST['application_type'] ) ? sanitize_text_field( wp_unslash( $_POST['application_type'] ) ) : '';
 	$notes             = isset( $_POST['notes'] ) ? sanitize_textarea_field( wp_unslash( $_POST['notes'] ) ) : '';
 
-	bizupkeep_child_ensure_client_record( $wp_user_id );
+	bizupkeep_child_ensure_client_record( $wp_user_id, $guest_phone );
 
 	$submitted = match ( $application_type ) {
 		'new_registration'  => bizupkeep_child_submit_new_registration( $wp_user_id, $notes ),

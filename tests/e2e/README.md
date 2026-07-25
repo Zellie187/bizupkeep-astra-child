@@ -34,7 +34,8 @@ See `Support/Config.php` for the full list of overridable values.
 - `CompanyAmendmentSubmissionTest` - Company Amendment submission (address-change case).
 - `AnnualReturnSubmissionTest` - Annual Return submission, asserting it stays at `Created` until staff send a quote.
 - `DocumentUploadTest` - the My Documents upload form, including the actual file (multipart/form-data).
-- `PaymentFlowTest` - the full real path from Amendment submission through both required document uploads to `AwaitingPayment`, then the "Pay Now" link, asserting it lands on checkout with the exact product matching the amendment's change type(s).
+- `PaymentFlowTest` - the full real path from Amendment submission through all four required document uploads to `AwaitingPayment`, then the "Pay Now" link, asserting it lands on checkout with the exact real product matching the amendment's change type(s).
+- `GuestApplicationSubmissionTest` - the no-login-required guest path: a fresh, never-logged-in `HttpClient` submits `/apply/` with name/email/phone in the form itself, asserting an account and client record get created and the same session is already logged in afterward (no separate login step) - plus the "email already registered" rejection case, asserting no duplicate account or company gets created.
 
 Not covered: the admin-side screens (`bizupkeep-workflow`'s own PHPUnit suite covers those at the unit level; this suite is theme-only), Company Amendment's director-change and combined-type cases, Annual Return's multi-year filing, and the Registration/Annual-Return payment flows (structurally identical patterns to what `PaymentFlowTest` already proves for Amendment - add tests here if a bug is ever found specifically in one of them).
 

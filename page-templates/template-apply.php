@@ -1,8 +1,8 @@
 <?php
 /**
  * Template Name: BizUpKeep Apply
- * Description:   Application intake page - lets a logged-in client start
- *                 a New Company Registration, a Company Amendment
+ * Description:   Application intake page - lets a client start a New
+ *                 Company Registration, a Company Amendment
  *                 (director/name/address change, any combination), or an
  *                 Annual Return filing. All three share this one page;
  *                 bizupkeep_child_render_application_type_fields() picks
@@ -12,6 +12,15 @@
  *                 by bizupkeep_child_handle_apply_submission() in
  *                 functions.php (runs on template_redirect, before this
  *                 template ever renders, so it can redirect on success).
+ *
+ *                 No login is required to reach this form - a guest is
+ *                 asked for their name/email/phone (see the "Your
+ *                 Details" fieldset below, shown only when logged out)
+ *                 and bizupkeep_child_register_guest_applicant() creates
+ *                 and logs them into a real account behind the scenes
+ *                 on submit, so nothing downstream (document upload,
+ *                 My Applications, checkout) needs to know the
+ *                 difference from a client who registered up front.
  *
  * @package BizUpKeep_Astra_Child
  */
@@ -37,25 +46,25 @@ get_header();
 				</a>
 			</p>
 
-		<?php elseif ( ! is_user_logged_in() ) : ?>
-
-			<h1><?php esc_html_e( 'Start Your Application', 'bizupkeep-astra-child' ); ?></h1>
-			<p><?php esc_html_e( 'Log in or create a free account to start your application.', 'bizupkeep-astra-child' ); ?></p>
-			<p>
-				<a href="<?php echo esc_url( wp_login_url( get_permalink() ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
-					<?php esc_html_e( 'Log In', 'bizupkeep-astra-child' ); ?>
-				</a>
-				<a href="<?php echo esc_url( wp_registration_url() ); ?>" class="bizupkeep-btn">
-					<?php esc_html_e( 'Create an Account', 'bizupkeep-astra-child' ); ?>
-				</a>
-			</p>
-
 		<?php else : ?>
 
 			<h1><?php esc_html_e( 'Start Your Application', 'bizupkeep-astra-child' ); ?></h1>
 			<p><?php esc_html_e( 'Tell us what you need - the form below adjusts to match.', 'bizupkeep-astra-child' ); ?></p>
 
-			<?php if ( isset( $_GET['apply_error'] ) ) : ?>
+			<?php if ( isset( $_GET['apply_error'] ) && 'email_exists' === $_GET['apply_error'] ) : ?>
+				<p class="bizupkeep-status-pill">
+					<?php
+					printf(
+						/* translators: %s: login page URL */
+						wp_kses(
+							__( 'An account already exists for that email address. Please <a href="%s">log in</a> first, then try again.', 'bizupkeep-astra-child' ),
+							array( 'a' => array( 'href' => array() ) )
+						),
+						esc_url( wp_login_url( get_permalink() ) )
+					);
+					?>
+				</p>
+			<?php elseif ( isset( $_GET['apply_error'] ) ) : ?>
 				<p class="bizupkeep-status-pill"><?php esc_html_e( 'Something went wrong - please check the form and try again.', 'bizupkeep-astra-child' ); ?></p>
 			<?php endif; ?>
 
@@ -68,6 +77,30 @@ get_header();
 
 			<form method="post" class="bizupkeep-upload-form bizupkeep-apply-form" id="bizupkeep-apply-form">
 				<?php wp_nonce_field( 'bizupkeep_apply', 'bizupkeep_apply_nonce' ); ?>
+
+				<?php if ( ! is_user_logged_in() ) : ?>
+					<fieldset class="bizupkeep-type-picker">
+						<legend><?php esc_html_e( 'Your Details', 'bizupkeep-astra-child' ); ?></legend>
+						<p class="bizupkeep-field-hint"><?php esc_html_e( "We'll set up your account automatically so you can track this application - no separate sign-up needed.", 'bizupkeep-astra-child' ); ?></p>
+
+						<p>
+							<label for="bizupkeep-guest-first-name"><?php esc_html_e( 'First Name', 'bizupkeep-astra-child' ); ?></label>
+							<input type="text" id="bizupkeep-guest-first-name" name="guest_first_name" required>
+						</p>
+						<p>
+							<label for="bizupkeep-guest-last-name"><?php esc_html_e( 'Last Name', 'bizupkeep-astra-child' ); ?></label>
+							<input type="text" id="bizupkeep-guest-last-name" name="guest_last_name" required>
+						</p>
+						<p>
+							<label for="bizupkeep-guest-email"><?php esc_html_e( 'Email', 'bizupkeep-astra-child' ); ?></label>
+							<input type="email" id="bizupkeep-guest-email" name="guest_email" required>
+						</p>
+						<p>
+							<label for="bizupkeep-guest-phone"><?php esc_html_e( 'Phone', 'bizupkeep-astra-child' ); ?></label>
+							<input type="tel" id="bizupkeep-guest-phone" name="guest_phone">
+						</p>
+					</fieldset>
+				<?php endif; ?>
 
 				<fieldset class="bizupkeep-type-picker">
 					<legend><?php esc_html_e( 'What do you need?', 'bizupkeep-astra-child' ); ?></legend>
