@@ -9,6 +9,31 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use BizHub\Bookkeeping\Accounts\ChartOfAccountsTemplate as BookkeepingChartOfAccountsTemplate;
+use BizHub\Bookkeeping\Contracts\AccountServiceInterface as BookkeepingAccountServiceInterface;
+use BizHub\Bookkeeping\Contracts\BankImportServiceInterface;
+use BizHub\Bookkeeping\Contracts\CompanySettingsRepositoryInterface;
+use BizHub\Bookkeeping\Contracts\FinancialStatementsServiceInterface;
+use BizHub\Bookkeeping\Contracts\InvoiceServiceInterface;
+use BizHub\Bookkeeping\Contracts\JournalRepositoryInterface as BookkeepingJournalRepositoryInterface;
+use BizHub\Bookkeeping\Contracts\RecurringTransactionServiceInterface;
+use BizHub\Bookkeeping\Contracts\SubscriptionServiceInterface;
+use BizHub\Bookkeeping\Contracts\TransactionCaptureServiceInterface;
+use BizHub\Bookkeeping\DTO\CaptureTransactionData;
+use BizHub\Bookkeeping\DTO\DateRange as BookkeepingDateRange;
+use BizHub\Bookkeeping\DTO\InvoiceLineInput;
+use BizHub\Bookkeeping\Entities\ImportMapping;
+use BizHub\Bookkeeping\Enums\ImportAmountStyle;
+use BizHub\Bookkeeping\Enums\PaymentMethod as BookkeepingPaymentMethod;
+use BizHub\Bookkeeping\Enums\RecurringFrequency;
+use BizHub\Bookkeeping\Enums\TransactionType as BookkeepingTransactionType;
+use BizHub\Bookkeeping\Support\Money as BookkeepingMoney;
+use BizHub\Bookkeeping\Exceptions\BookkeepingException;
+use BizHub\Bookkeeping\Export\Contracts\LedgerExporterInterface;
+use BizHub\Bookkeeping\Export\CsvReader as BookkeepingCsvReader;
+use BizHub\Bookkeeping\Export\QuickBooksOnlineExporter;
+use BizHub\Bookkeeping\Export\SageExporter;
+use BizHub\Bookkeeping\Export\XeroExporter;
 use BizHub\ClientPortal\Contracts\ClientServiceInterface;
 use BizHub\ClientPortal\DTO\ClientData;
 use BizHub\ClientPortal\DTO\ProfileData;
@@ -33,8 +58,10 @@ use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentDefinition;
 use BizHub\Workflow\Workflows\CompanyAmendment\CompanyAmendmentService;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationDefinition;
 use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
+use BizUpKeep\Core\Contracts\ServiceRepositoryInterface;
+use BizUpKeep\Core\Enums\ServiceVatTreatment;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.26.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.29.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -147,6 +174,26 @@ add_action( 'widgets_init', 'bizupkeep_child_widgets_init' );
 
 add_action( 'after_switch_theme', 'bizupkeep_child_setup_client_portal' );
 add_action( 'init', 'bizupkeep_child_maybe_migrate_client_portal_menu' );
+add_action( 'init', 'bizupkeep_child_maybe_add_bookkeeping_page' );
+
+/**
+ * One-time re-run for sites that activated the theme before "My
+ * Bookkeeping" was added to the client portal -
+ * bizupkeep_child_setup_client_portal() only runs on after_switch_theme,
+ * which doesn't fire again just from deploying updated theme files, so
+ * this creates the missing page (and re-syncs the nav menu) once via a
+ * stored option flag, mirroring bizupkeep_child_maybe_migrate_client_portal_menu()'s
+ * approach for the same underlying problem.
+ */
+function bizupkeep_child_maybe_add_bookkeeping_page(): void {
+	if ( get_option( 'bizupkeep_child_bookkeeping_page_added' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_client_portal();
+
+	update_option( 'bizupkeep_child_bookkeeping_page_added', '1' );
+}
 
 /**
  * One-time migration for sites that activated the theme before the
@@ -188,6 +235,7 @@ function bizupkeep_child_setup_client_portal(): void {
 		'client-portal-companies'    => __( 'My Companies', 'bizupkeep-astra-child' ),
 		'client-portal-documents'    => __( 'My Documents', 'bizupkeep-astra-child' ),
 		'client-portal-applications' => __( 'My Applications', 'bizupkeep-astra-child' ),
+		'client-portal-bookkeeping'  => __( 'My Bookkeeping', 'bizupkeep-astra-child' ),
 		'client-portal-profile'      => __( 'My Profile', 'bizupkeep-astra-child' ),
 	);
 
@@ -216,6 +264,10 @@ function bizupkeep_child_setup_client_portal(): void {
 
 		if ( 'client-portal-applications' === $slug && 0 !== $page_id ) {
 			update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-applications.php' );
+		}
+
+		if ( 'client-portal-bookkeeping' === $slug && 0 !== $page_id ) {
+			update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-bookkeeping.php' );
 		}
 
 		if ( 'client-portal-profile' === $slug && 0 !== $page_id ) {
@@ -3118,6 +3170,26 @@ const BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY = 'bizupkeep_annual_return_quot
 const BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU = 'bizupkeep-annual-return-fee';
 
 /**
+ * Carries the company UUID being paid for through the "Bookkeeping
+ * Monthly Access" checkout flow - same session->order-meta pattern as
+ * BIZUPKEEP_PAYMENT_SESSION_KEY above, just company-scoped instead of
+ * workflow-scoped (a bookkeeping subscription isn't tied to any one
+ * workflow application). See bizupkeep_child_handle_bookkeeping_subscription_payment_intent()
+ * / bizupkeep_child_attach_bookkeeping_subscription_to_order().
+ */
+const BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_SESSION_KEY = 'bizupkeep_bookkeeping_subscription_company_uuid';
+
+/**
+ * SKU of the "Bookkeeping Monthly Access" product - lazily created at
+ * a R0 PLACEHOLDER price (see
+ * bizupkeep_child_get_or_create_bookkeeping_subscription_product()).
+ * Unlike the Annual Return fee product, nothing overrides this price
+ * dynamically - staff must set the real monthly price in WooCommerce
+ * Products before this goes live.
+ */
+const BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_PRODUCT_SKU = 'bizupkeep-bookkeeping-monthly';
+
+/**
  * Slug of the real, staff-managed "New Company Registration" product -
  * https://bizupkeep.co.za/product/new-company-registration/. Resolved
  * by slug rather than SKU (see bizupkeep_child_get_product_id_by_slug())
@@ -3211,6 +3283,82 @@ function bizupkeep_child_resolve_amendment_product_id( array $amendmentTypes ): 
 	return bizupkeep_child_get_product_id_by_slug( BIZUPKEEP_AMENDMENT_PRODUCT_SLUGS[ $key ] );
 }
 
+/**
+ * Resolve a Company Amendment application's exact amendment_types to a
+ * Service catalog service_key, mirroring
+ * bizupkeep_child_resolve_amendment_product_id()'s sort logic exactly
+ * (same sorted type set) but joined with "_" and prefixed with
+ * "amendment_" to match the catalog's naming convention instead of a
+ * WooCommerce product slug.
+ *
+ * @param array<int,string> $amendmentTypes
+ */
+function bizupkeep_child_resolve_amendment_service_key( array $amendmentTypes ): ?string {
+	$types = array_values( array_intersect( $amendmentTypes, CompanyAmendmentDefinition::ALL_AMENDMENT_TYPES ) );
+
+	if ( array() === $types ) {
+		return null;
+	}
+
+	sort( $types );
+
+	return 'amendment_' . implode( '_', $types );
+}
+
+/**
+ * Post A2Z's own revenue for a confirmed WooCommerce order into its
+ * Internal Books company (see InternalBooksPage), using the Service
+ * catalog (round 2 of the WooCommerce service-catalog plan) to decide
+ * VAT treatment - deliberately best-effort: called from inside its
+ * own try/catch by every caller, since a failure here must never be
+ * allowed to affect the actual payment/subscription confirmation that
+ * already succeeded by the time this runs.
+ */
+function bizupkeep_child_post_a2z_revenue( string $service_key, WC_Order $order ): void {
+	$internal_company_uuid = get_option( 'bizupkeep_bookkeeping_internal_company_uuid' );
+
+	if ( ! is_string( $internal_company_uuid ) || '' === $internal_company_uuid ) {
+		return;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$container = bizhub()->container();
+
+	$service = $container->get( ServiceRepositoryInterface::class )->findByKey( $service_key );
+
+	if ( null === $service ) {
+		return;
+	}
+
+	$settings     = $container->get( CompanySettingsRepositoryInterface::class )->findByCompanyUuid( $internal_company_uuid );
+	$includes_vat = ServiceVatTreatment::Inclusive === $service->vatTreatment
+		&& null !== $settings
+		&& $settings->isVatRegistered;
+
+	$account = $container->get( BookkeepingAccountServiceInterface::class )->getByCode(
+		$internal_company_uuid,
+		BookkeepingChartOfAccountsTemplate::CODE_SALES_REVENUE
+	);
+
+	$data = new CaptureTransactionData(
+		date: new \DateTimeImmutable(),
+		amount: BookkeepingMoney::fromRands( (float) $order->get_total() ),
+		categoryAccountUuid: $account->uuid,
+		paymentMethod: BookkeepingPaymentMethod::Bank,
+		description: sprintf( '%s - Order #%d', $service->name, $order->get_id() ),
+		includesVat: $includes_vat
+	);
+
+	$container->get( TransactionCaptureServiceInterface::class )->captureIncome(
+		$internal_company_uuid,
+		$data,
+		(int) $order->get_customer_id()
+	);
+}
+
 if ( class_exists( 'WooCommerce' ) ) {
 	add_action( 'template_redirect', 'bizupkeep_child_handle_registration_payment_intent' );
 	add_action( 'template_redirect', 'bizupkeep_child_handle_annual_return_payment_intent' );
@@ -3218,6 +3366,10 @@ if ( class_exists( 'WooCommerce' ) ) {
 	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_workflow_to_order', 10, 2 );
 	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_order_payment', 10, 4 );
 	add_action( 'woocommerce_before_calculate_totals', 'bizupkeep_child_apply_annual_return_quote_price' );
+
+	add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_subscription_payment_intent' );
+	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_bookkeeping_subscription_to_order', 10, 2 );
+	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_bookkeeping_subscription_order_payment', 10, 4 );
 }
 
 /**
@@ -3573,6 +3725,31 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
 		);
 
 		$order->update_meta_data( '_bizupkeep_payment_confirmed', '1' );
+
+		// Best-effort A2Z revenue posting - deliberately its own inner
+		// try/catch, separate from the outer one: a failure here must
+		// never be mistaken for confirm_payment() itself having failed,
+		// which would incorrectly leave the workflow at AwaitingPayment
+		// when the customer's payment actually succeeded.
+		try {
+			$service_key = match ( $instance->getWorkflowType() ) {
+				CompanyRegistrationDefinition::TYPE => 'registration',
+				AnnualReturnDefinition::TYPE => 'annual_return_fee',
+				CompanyAmendmentDefinition::TYPE => bizupkeep_child_resolve_amendment_service_key(
+					$instance->getMetadata()['amendment_types'] ?? array()
+				),
+				default => null,
+			};
+
+			if ( null !== $service_key ) {
+				bizupkeep_child_post_a2z_revenue( $service_key, $order );
+				$order->update_meta_data( '_bizupkeep_a2z_revenue_posted', '1' );
+			}
+		} catch ( \Throwable $e ) {
+			// Best-effort only - staff can capture the missed revenue
+			// manually via Internal Books.
+		}
+
 		$order->save();
 	} catch ( \Throwable $e ) {
 		// Leave the workflow at AwaitingPayment - resolvable manually,
@@ -3957,4 +4134,3082 @@ function bizupkeep_child_process_profile_update( int $wp_user_id ): bool {
 	}
 
 	return true;
+}
+
+/*
+|--------------------------------------------------------------------------
+| My Bookkeeping (BizUpKeep Bookkeeping plugin integration)
+|--------------------------------------------------------------------------
+|
+| Follows the exact same pattern as every other Client Portal page in
+| this file: guard -> bizhub()->container() chain -> ownership-checked
+| forms handled on template_redirect, never inside the template itself.
+| The bookkeeping plugin's own services do all the double-entry/
+| validation work; this file only scopes access to the logged-in
+| client's own company and translates form input <-> service calls.
+*/
+
+/**
+ * Idempotently seed a company's default chart of accounts. Safe to
+ * call on every "My Bookkeeping" page load - AccountService::ensureSeeded()
+ * is itself a no-op once a company already has any accounts.
+ */
+function bizupkeep_child_bookkeeping_ensure_seeded( string $company_uuid ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	bizhub()->container()->get( BookkeepingAccountServiceInterface::class )->ensureSeeded( $company_uuid );
+}
+
+/**
+ * @return array<int,object>
+ */
+function bizupkeep_child_bookkeeping_income_accounts( string $company_uuid ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	return bizhub()->container()->get( BookkeepingAccountServiceInterface::class )->listIncomeAccounts( $company_uuid );
+}
+
+/**
+ * @return array<int,object>
+ */
+function bizupkeep_child_bookkeeping_expense_accounts( string $company_uuid ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	return bizhub()->container()->get( BookkeepingAccountServiceInterface::class )->listExpenseAccounts( $company_uuid );
+}
+
+/**
+ * The full chart of accounts, for the read-only "Accounts" tab.
+ *
+ * @return array<int,object>
+ */
+function bizupkeep_child_bookkeeping_all_accounts( string $company_uuid ): array {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return array();
+	}
+
+	return bizhub()->container()->get( BookkeepingAccountServiceInterface::class )->listAccounts( $company_uuid );
+}
+
+/**
+ * Parse the "Statements" and "Export" tabs' ?from=/?to= (or ?as_of= for
+ * the Balance Sheet) query params into a DateRange, defaulting to
+ * month-to-date when absent or unparseable - never trusts raw input
+ * into a DateTimeImmutable without a try/catch, since a malformed date
+ * string throws rather than silently producing a wrong date.
+ */
+function bizupkeep_child_bookkeeping_parse_range(): BookkeepingDateRange {
+	$from_raw = isset( $_GET['from'] ) ? sanitize_text_field( wp_unslash( $_GET['from'] ) ) : '';
+	$to_raw   = isset( $_GET['to'] ) ? sanitize_text_field( wp_unslash( $_GET['to'] ) ) : '';
+
+	try {
+		$to = '' !== $to_raw ? new \DateTimeImmutable( $to_raw ) : new \DateTimeImmutable();
+	} catch ( \Exception $e ) {
+		$to = new \DateTimeImmutable();
+	}
+
+	if ( '' === $from_raw ) {
+		return BookkeepingDateRange::monthToDate( $to );
+	}
+
+	try {
+		return BookkeepingDateRange::between( new \DateTimeImmutable( $from_raw ), $to );
+	} catch ( \Exception $e ) {
+		return BookkeepingDateRange::monthToDate( $to );
+	}
+}
+
+/**
+ * Parse the "Balance Sheet" tab's ?as_of= query param, defaulting to
+ * today.
+ */
+function bizupkeep_child_bookkeeping_parse_as_of(): \DateTimeImmutable {
+	$raw = isset( $_GET['as_of'] ) ? sanitize_text_field( wp_unslash( $_GET['as_of'] ) ) : '';
+
+	if ( '' === $raw ) {
+		return new \DateTimeImmutable();
+	}
+
+	try {
+		return new \DateTimeImmutable( $raw );
+	} catch ( \Exception $e ) {
+		return new \DateTimeImmutable();
+	}
+}
+
+/**
+ * Resolve a CSV export platform key ("quickbooks"/"xero"/"sage") to its
+ * exporter. Each concrete exporter is autowired by BizHub's shared
+ * container with no explicit binding needed (see
+ * bizupkeep-bookkeeping's Container/definitions.php) - there's no
+ * ambiguity to resolve since each concrete class has exactly one
+ * possible set of constructor dependencies.
+ */
+function bizupkeep_child_bookkeeping_exporter( string $platform_key ): ?LedgerExporterInterface {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return null;
+	}
+
+	$class = match ( $platform_key ) {
+		'quickbooks' => QuickBooksOnlineExporter::class,
+		'xero'       => XeroExporter::class,
+		'sage'       => SageExporter::class,
+		default      => null,
+	};
+
+	if ( null === $class ) {
+		return null;
+	}
+
+	return bizhub()->container()->get( $class );
+}
+
+/**
+ * Determine whether the current request is for the "My Bookkeeping"
+ * page, the same is_page()+parent-match pattern
+ * bizupkeep_child_handle_profile_update() uses.
+ */
+function bizupkeep_child_is_bookkeeping_page(): bool {
+	if ( ! is_page() ) {
+		return false;
+	}
+
+	$portal = bizupkeep_child_find_page( 'client-portal', 0 );
+
+	return bizupkeep_child_find_page( 'client-portal-bookkeeping', $portal ) === get_queried_object_id();
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bookkeeping monthly subscription (WooCommerce checkout)
+|--------------------------------------------------------------------------
+|
+| Mirrors bizupkeep_child_handle_amendment_payment_intent()'s exact
+| pattern (see the doc comment above BIZUPKEEP_PAYMENT_SESSION_KEY for
+| the full session -> order-meta -> order-status-changed flow this
+| copies), scoped to a company UUID instead of a workflow UUID, since a
+| bookkeeping subscription isn't tied to any one application. A
+| successful payment calls SubscriptionServiceInterface::extend() - the
+| same call the bizupkeep-bookkeeping plugin's staff-facing "Extend 30
+| Days" admin button makes (ManualJournalEntryPage), so a client
+| payment and a staff manual extension behave identically from the
+| ledger's point of view.
+*/
+
+/**
+ * Whether a company currently has an active bookkeeping subscription -
+ * the gate the Capture/Export tabs check before showing their forms.
+ */
+function bizupkeep_child_bookkeeping_subscription_active( string $company_uuid ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	return bizhub()->container()->get( SubscriptionServiceInterface::class )->isActive( $company_uuid );
+}
+
+/**
+ * Whether staff have flagged this company as VAT registered - the sole
+ * gate on whether the Capture tab shows VAT fields and whether the
+ * Statements tab shows the VAT Summary section. Set only via the
+ * staff-facing ManualJournalEntryPage; never client-editable.
+ */
+function bizupkeep_child_bookkeeping_is_vat_registered( string $company_uuid ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$settings = bizhub()->container()->get( CompanySettingsRepositoryInterface::class )->findByCompanyUuid( $company_uuid );
+
+	return null !== $settings && $settings->isVatRegistered;
+}
+
+/**
+ * The company's current subscription record (for displaying
+ * paid_until on the Dashboard tab), lazily creating one if this
+ * company has never been touched before - mirrors
+ * bizupkeep_child_bookkeeping_ensure_seeded()'s lazy pattern for the
+ * chart of accounts.
+ */
+function bizupkeep_child_bookkeeping_subscription_status( string $company_uuid ): ?object {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return null;
+	}
+
+	return bizhub()->container()->get( SubscriptionServiceInterface::class )->getOrCreate( $company_uuid );
+}
+
+/**
+ * Find an existing "Bookkeeping Monthly Access" product by SKU, or
+ * create one - mirrors bizupkeep_child_get_or_create_annual_return_fee_product()
+ * exactly, except this product's R0 price is a genuine placeholder
+ * (nothing overrides it dynamically the way the Annual Return fee's
+ * quote-price hook does) - staff must set the real monthly price in
+ * WooCommerce Products before this goes live.
+ */
+function bizupkeep_child_get_or_create_bookkeeping_subscription_product(): int {
+	$existing = wc_get_product_id_by_sku( BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_PRODUCT_SKU );
+
+	if ( $existing ) {
+		return (int) $existing;
+	}
+
+	if ( ! class_exists( 'WC_Product_Simple' ) ) {
+		return 0;
+	}
+
+	$product = new WC_Product_Simple();
+	$product->set_name( __( 'Bookkeeping Monthly Access', 'bizupkeep-astra-child' ) );
+	$product->set_sku( BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_PRODUCT_SKU );
+	$product->set_regular_price( '0' );
+	$product->set_price( '0' );
+	$product->set_virtual( true );
+	$product->set_catalog_visibility( 'hidden' );
+	$product->set_status( 'publish' );
+
+	return (int) $product->save();
+}
+
+/**
+ * Build the "Subscribe"/"Renew" URL for a company's bookkeeping
+ * subscription, routing to bizupkeep_child_handle_bookkeeping_subscription_payment_intent().
+ */
+function bizupkeep_child_bookkeeping_subscription_payment_url( string $company_uuid ): string {
+	return add_query_arg(
+		array(
+			'bizupkeep_pay_bookkeeping_subscription' => $company_uuid,
+			'tab' => 'capture',
+		),
+		get_permalink( bizupkeep_child_find_page( 'client-portal-bookkeeping', bizupkeep_child_find_page( 'client-portal', 0 ) ) )
+	);
+}
+
+/**
+ * Handle ?bizupkeep_pay_bookkeeping_subscription={company_uuid}: verify
+ * the company belongs to the logged-in client, add the (real,
+ * staff-priced) "Bookkeeping Monthly Access" product to a cleared
+ * cart, stash the company UUID in session, and send the client to
+ * checkout - exactly bizupkeep_child_handle_amendment_payment_intent()'s
+ * pattern, scoped to a company instead of a workflow.
+ */
+function bizupkeep_child_handle_bookkeeping_subscription_payment_intent(): void {
+	if ( ! isset( $_GET['bizupkeep_pay_bookkeeping_subscription'] ) || ! is_user_logged_in() ) {
+		return;
+	}
+
+	if ( null === WC()->cart || null === WC()->session ) {
+		return;
+	}
+
+	$fallback_url = home_url( '/client-portal/client-portal-bookkeeping/' );
+	$company_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_pay_bookkeeping_subscription'] ) );
+	$company      = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+
+	if ( null === $company ) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	$product_id = bizupkeep_child_get_or_create_bookkeeping_subscription_product();
+
+	if ( 0 === $product_id ) {
+		wp_safe_redirect( $fallback_url );
+		exit;
+	}
+
+	WC()->cart->empty_cart();
+	WC()->cart->add_to_cart( $product_id, 1 );
+	WC()->session->set( BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_SESSION_KEY, $company_uuid );
+
+	wp_safe_redirect( wc_get_checkout_url() );
+	exit;
+}
+
+/**
+ * At checkout, copy the company UUID from the WooCommerce session onto
+ * the new order as post meta - mirrors
+ * bizupkeep_child_attach_workflow_to_order() exactly, re-verifying
+ * ownership again here rather than trusting the session value blindly.
+ */
+function bizupkeep_child_attach_bookkeeping_subscription_to_order( WC_Order $order, array $data ): void {
+	if ( null === WC()->session ) {
+		return;
+	}
+
+	$company_uuid = WC()->session->get( BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_SESSION_KEY );
+
+	if ( ! is_string( $company_uuid ) || '' === $company_uuid ) {
+		return;
+	}
+
+	WC()->session->set( BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_SESSION_KEY, null );
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id || null === bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid ) ) {
+		return;
+	}
+
+	$order->update_meta_data( '_bizupkeep_bookkeeping_subscription_company_uuid', $company_uuid );
+}
+
+/**
+ * When an order's status changes to processing or completed, extend
+ * the paid-for company's bookkeeping subscription by 30 days - mirrors
+ * bizupkeep_child_handle_order_payment()'s idempotency-guarded pattern
+ * exactly, reading exclusively from order meta (never session, which
+ * may not be available in this hook's context - see the doc comment
+ * above BIZUPKEEP_PAYMENT_SESSION_KEY).
+ */
+function bizupkeep_child_handle_bookkeeping_subscription_order_payment( int $order_id, string $old_status, string $new_status, WC_Order $order ): void {
+	if ( ! in_array( $new_status, array( 'processing', 'completed' ), true ) ) {
+		return;
+	}
+
+	if ( '1' === $order->get_meta( '_bizupkeep_bookkeeping_subscription_confirmed' ) ) {
+		return;
+	}
+
+	$company_uuid = $order->get_meta( '_bizupkeep_bookkeeping_subscription_company_uuid' );
+
+	if ( ! is_string( $company_uuid ) || '' === $company_uuid ) {
+		return;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	try {
+		bizhub()->container()->get( SubscriptionServiceInterface::class )->extend( $company_uuid, 30 );
+
+		$order->update_meta_data( '_bizupkeep_bookkeeping_subscription_confirmed', '1' );
+
+		// Best-effort A2Z revenue posting - its own inner try/catch, same
+		// reasoning as bizupkeep_child_handle_order_payment(): must never
+		// be mistaken for the subscription extension itself having
+		// failed.
+		try {
+			bizupkeep_child_post_a2z_revenue( 'bookkeeping_monthly', $order );
+			$order->update_meta_data( '_bizupkeep_a2z_revenue_posted', '1' );
+		} catch ( \Throwable $e ) {
+			// Best-effort only - staff can capture the missed revenue
+			// manually via Internal Books.
+		}
+
+		$order->save();
+	} catch ( \Throwable $e ) {
+		// Left unconfirmed - a subsequent status change (or manual staff
+		// extension) can still resolve this; nothing here should ever
+		// fatal a WooCommerce order-status transition.
+	}
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_capture_transaction_submission' );
+
+/**
+ * Handle the "Capture" tab's income/expense form POST. Runs on
+ * template_redirect so it can redirect on success/failure before any
+ * HTML is sent, matching every other portal form handler in this file.
+ */
+function bizupkeep_child_handle_capture_transaction_submission(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_capture_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_capture', 'bizupkeep_bookkeeping_capture_nonce' );
+
+	$result = bizupkeep_child_process_capture_transaction( get_current_user_id() );
+
+	$redirect_args = $result
+		? array( 'tab' => 'capture', 'captured' => '1' )
+		: array( 'tab' => 'capture', 'capture_error' => '1' );
+
+	wp_safe_redirect( add_query_arg( $redirect_args, get_permalink() ) );
+	exit;
+}
+
+/**
+ * Validate and post the capture form against the logged-in client's own
+ * company - the posted company UUID is always re-verified via
+ * bizupkeep_child_get_owned_company() before anything is written,
+ * never trusted outright. Returns false (rather than throwing) on any
+ * failure, matching every other public-facing form handler's approach.
+ */
+function bizupkeep_child_process_capture_transaction( int $wp_user_id ): bool {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return false;
+	}
+
+	$company_uuid = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+
+	if ( null === $company ) {
+		return false;
+	}
+
+	$type_raw     = isset( $_POST['transaction_type'] ) ? sanitize_text_field( wp_unslash( $_POST['transaction_type'] ) ) : '';
+	$date_raw     = isset( $_POST['transaction_date'] ) ? sanitize_text_field( wp_unslash( $_POST['transaction_date'] ) ) : '';
+	$amount_raw   = isset( $_POST['amount'] ) ? sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : '0';
+	$category     = isset( $_POST['category_account'] ) ? sanitize_text_field( wp_unslash( $_POST['category_account'] ) ) : '';
+	$payment_raw  = isset( $_POST['payment_method'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_method'] ) ) : '';
+	$description  = isset( $_POST['description'] ) ? sanitize_text_field( wp_unslash( $_POST['description'] ) ) : '';
+
+	// Nonce already verified by the caller; a checkbox's mere presence is the only signal needed here.
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing
+	$includes_vat = isset( $_POST['includes_vat'] ) && bizupkeep_child_bookkeeping_is_vat_registered( $company->getUuid() );
+
+	$payment_method = 'cash' === $payment_raw ? BookkeepingPaymentMethod::Cash : BookkeepingPaymentMethod::Bank;
+
+	try {
+		$date = '' !== $date_raw ? new \DateTimeImmutable( $date_raw ) : new \DateTimeImmutable();
+	} catch ( \Exception $e ) {
+		return false;
+	}
+
+	$data = new CaptureTransactionData(
+		$date,
+		\BizHub\Bookkeeping\Support\Money::fromRands( (float) $amount_raw ),
+		$category,
+		$payment_method,
+		$description,
+		$includes_vat
+	);
+
+	$capture = bizhub()->container()->get( TransactionCaptureServiceInterface::class );
+
+	try {
+		if ( 'income' === $type_raw ) {
+			$capture->captureIncome( $company->getUuid(), $data, $wp_user_id );
+		} else {
+			$capture->captureExpense( $company->getUuid(), $data, $wp_user_id );
+		}
+	} catch ( BookkeepingException $e ) {
+		return false;
+	}
+
+	return true;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_export_request' );
+
+/**
+ * Stream a CSV export download. Runs on template_redirect (before any
+ * HTML output) since it sends its own Content-Type/Content-Disposition
+ * headers and exits - the same constraint every other file-download
+ * handler in this codebase (e.g. Quality Review's streamDocument())
+ * respects.
+ */
+function bizupkeep_child_handle_bookkeeping_export_request(): void {
+	if ( ! isset( $_GET['bizupkeep_bookkeeping_export'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( get_permalink() );
+		exit;
+	}
+
+	$company_uuid = isset( $_GET['company'] ) ? sanitize_text_field( wp_unslash( $_GET['company'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+
+	if ( null === $company ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'export', 'export_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	// Export has no dedicated per-client service of its own to gate (the
+	// exporters are generic reporting classes, also usable by staff) - the
+	// subscription check lives here, the only entry point client-facing
+	// export ever goes through. This also closes the direct-URL bypass a
+	// client could otherwise use even with the Export tab's UI hidden.
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'export', 'export_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	$platform_key = sanitize_text_field( wp_unslash( $_GET['bizupkeep_bookkeeping_export'] ) );
+	$exporter     = bizupkeep_child_bookkeeping_exporter( $platform_key );
+
+	if ( null === $exporter ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'export', 'export_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	$range = bizupkeep_child_bookkeeping_parse_range();
+	$csv   = $exporter->exportJournalEntries( $company->getUuid(), $range );
+
+	nocache_headers();
+	header( 'Content-Type: text/csv; charset=utf-8' );
+	header( 'Content-Disposition: attachment; filename="' . sanitize_file_name( $platform_key . '-export-' . gmdate( 'Y-m-d' ) . '.csv' ) . '"' );
+	header( 'Content-Length: ' . strlen( $csv ) );
+
+	echo $csv; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- raw CSV file content, not HTML.
+	exit;
+}
+
+/**
+ * Render the "Dashboard" tab: current-month income/expense totals plus
+ * a short recent-activity list. Bails out to a generic message on any
+ * BookkeepingException (e.g. LedgerIntegrityException) rather than
+ * fataling the whole portal page.
+ */
+function bizupkeep_child_render_bookkeeping_dashboard_tab( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	try {
+		$statements = bizhub()->container()->get( FinancialStatementsServiceInterface::class );
+		$income     = $statements->incomeStatement( $company->getUuid(), BookkeepingDateRange::monthToDate() );
+
+		$journal = bizhub()->container()->get( BookkeepingJournalRepositoryInterface::class );
+		$recent  = $journal->findEntriesForCompany( $company->getUuid(), BookkeepingDateRange::sinceInception( new \DateTimeImmutable() ), 10 );
+	} catch ( \Throwable $e ) {
+		echo '<p>' . esc_html__( 'Your bookkeeping summary could not be loaded right now.', 'bizupkeep-astra-child' ) . '</p>';
+		return;
+	}
+	$subscription_active = bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() );
+	$subscription        = bizupkeep_child_bookkeeping_subscription_status( $company->getUuid() );
+	?>
+	<div class="bizupkeep-bookkeeping-summary">
+		<p class="bizupkeep-status-pill">
+			<?php if ( $subscription_active && null !== $subscription && null !== $subscription->paidUntil ) : ?>
+				<?php
+				printf(
+					/* translators: %s: the date the current subscription period paid for runs until. */
+					esc_html__( 'Bookkeeping subscription: Active until %s', 'bizupkeep-astra-child' ),
+					esc_html( $subscription->paidUntil->format( 'd/m/Y' ) )
+				);
+				?>
+			<?php else : ?>
+				<?php esc_html_e( 'Bookkeeping subscription: Inactive - ', 'bizupkeep-astra-child' ); ?>
+				<a href="<?php echo esc_url( bizupkeep_child_bookkeeping_subscription_payment_url( $company->getUuid() ) ); ?>">
+					<?php esc_html_e( 'Subscribe Now', 'bizupkeep-astra-child' ); ?>
+				</a>
+			<?php endif; ?>
+		</p>
+		<p>
+			<strong><?php esc_html_e( 'This month - Income:', 'bizupkeep-astra-child' ); ?></strong>
+			<?php echo esc_html( $income->totalIncome->format() ); ?>
+			&nbsp;&nbsp;
+			<strong><?php esc_html_e( 'Expenses:', 'bizupkeep-astra-child' ); ?></strong>
+			<?php echo esc_html( $income->totalExpenses->format() ); ?>
+			&nbsp;&nbsp;
+			<strong><?php esc_html_e( 'Net:', 'bizupkeep-astra-child' ); ?></strong>
+			<?php echo esc_html( $income->netIncome->format() ); ?>
+		</p>
+	</div>
+
+	<h2><?php esc_html_e( 'Recent Activity', 'bizupkeep-astra-child' ); ?></h2>
+
+	<?php if ( empty( $recent ) ) : ?>
+		<p><?php esc_html_e( 'No transactions captured yet.', 'bizupkeep-astra-child' ); ?></p>
+	<?php else : ?>
+		<table class="bizupkeep-bookkeeping-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Date', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Amount', 'bizupkeep-astra-child' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $recent as $entry ) : ?>
+					<?php
+					$total = \BizHub\Bookkeeping\Support\Money::zero();
+					foreach ( $entry->lines as $line ) {
+						if ( $line->isDebit() ) {
+							$total = $total->add( $line->debit );
+						}
+					}
+					?>
+					<tr>
+						<td><?php echo esc_html( $entry->entryDate->format( 'Y-m-d' ) ); ?></td>
+						<td><?php echo esc_html( $entry->description ); ?></td>
+						<td><?php echo esc_html( $total->format() ); ?></td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+	<?php endif; ?>
+	<?php
+}
+
+/**
+ * Shared "this action needs an active subscription" notice, shown by
+ * both the Capture and Export tabs in place of their normal content
+ * when bizupkeep_child_bookkeeping_subscription_active() is false.
+ * Dashboard/Accounts/Statements are deliberately NOT gated - a lapsed
+ * client can still see their own historical books, only the paid
+ * actions (capture new transactions, export) are locked.
+ */
+function bizupkeep_child_render_bookkeeping_subscription_locked_notice( Company $company ): void {
+	?>
+	<div class="bizupkeep-bookkeeping-summary">
+		<p class="bizupkeep-status-pill">
+			<?php esc_html_e( 'This feature requires an active bookkeeping subscription.', 'bizupkeep-astra-child' ); ?>
+		</p>
+		<p>
+			<a href="<?php echo esc_url( bizupkeep_child_bookkeeping_subscription_payment_url( $company->getUuid() ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Subscribe Now', 'bizupkeep-astra-child' ); ?>
+			</a>
+		</p>
+	</div>
+	<?php
+}
+
+/**
+ * Render the "Capture" tab: the simplified income/expense form.
+ * Deliberately shows no debit/credit vocabulary - see
+ * bizupkeep_child_process_capture_transaction() and
+ * TransactionCaptureService for where that translation happens.
+ */
+function bizupkeep_child_render_bookkeeping_capture_tab( Company $company ): void {
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		bizupkeep_child_render_bookkeeping_subscription_locked_notice( $company );
+		return;
+	}
+
+	$income_accounts  = bizupkeep_child_bookkeeping_income_accounts( $company->getUuid() );
+	$expense_accounts = bizupkeep_child_bookkeeping_expense_accounts( $company->getUuid() );
+	$vat_registered   = bizupkeep_child_bookkeeping_is_vat_registered( $company->getUuid() );
+	?>
+	<form method="post" class="bizupkeep-upload-form bizupkeep-bookkeeping-capture-form">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_capture', 'bizupkeep_bookkeeping_capture_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+
+		<p>
+			<label>
+				<input type="radio" name="transaction_type" value="income" checked
+					onclick="document.getElementById('bizupkeep-bk-income-category').style.display='block';document.getElementById('bizupkeep-bk-expense-category').style.display='none';">
+				<?php esc_html_e( 'Income', 'bizupkeep-astra-child' ); ?>
+			</label>
+			&nbsp;&nbsp;
+			<label>
+				<input type="radio" name="transaction_type" value="expense"
+					onclick="document.getElementById('bizupkeep-bk-income-category').style.display='none';document.getElementById('bizupkeep-bk-expense-category').style.display='block';">
+				<?php esc_html_e( 'Expense', 'bizupkeep-astra-child' ); ?>
+			</label>
+		</p>
+
+		<label for="bizupkeep-bk-date"><?php esc_html_e( 'Date', 'bizupkeep-astra-child' ); ?></label>
+		<input type="date" id="bizupkeep-bk-date" name="transaction_date" value="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>" required>
+
+		<label for="bizupkeep-bk-amount"><?php esc_html_e( 'Amount (R)', 'bizupkeep-astra-child' ); ?></label>
+		<input type="number" step="0.01" min="0.01" id="bizupkeep-bk-amount" name="amount" required>
+
+		<div id="bizupkeep-bk-income-category">
+			<label for="bizupkeep-bk-income-select"><?php esc_html_e( 'Category', 'bizupkeep-astra-child' ); ?></label>
+			<select id="bizupkeep-bk-income-select" name="category_account">
+				<?php foreach ( $income_accounts as $account ) : ?>
+					<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+				<?php endforeach; ?>
+			</select>
+		</div>
+
+		<div id="bizupkeep-bk-expense-category" style="display:none;">
+			<label for="bizupkeep-bk-expense-select"><?php esc_html_e( 'Category', 'bizupkeep-astra-child' ); ?></label>
+			<select id="bizupkeep-bk-expense-select" name="category_account">
+				<?php foreach ( $expense_accounts as $account ) : ?>
+					<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+				<?php endforeach; ?>
+			</select>
+		</div>
+
+		<script>
+		// Only the visible category <select>'s value is submitted (a hidden
+		// <select> still posts its own value otherwise) - toggle the
+		// "name" attribute along with visibility so only one category ever
+		// reaches the server, matching whichever transaction_type is checked.
+		(function () {
+			var incomeSelect = document.getElementById('bizupkeep-bk-income-select');
+			var expenseSelect = document.getElementById('bizupkeep-bk-expense-select');
+			function sync() {
+				var isIncome = document.querySelector('input[name="transaction_type"]:checked').value === 'income';
+				incomeSelect.name = isIncome ? 'category_account' : '';
+				expenseSelect.name = isIncome ? '' : 'category_account';
+			}
+			document.querySelectorAll('input[name="transaction_type"]').forEach(function (el) {
+				el.addEventListener('change', sync);
+			});
+			sync();
+		})();
+		</script>
+
+		<label for="bizupkeep-bk-payment"><?php esc_html_e( 'Payment Method', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-payment" name="payment_method">
+			<option value="bank"><?php esc_html_e( 'Bank', 'bizupkeep-astra-child' ); ?></option>
+			<option value="cash"><?php esc_html_e( 'Cash', 'bizupkeep-astra-child' ); ?></option>
+		</select>
+
+		<?php if ( $vat_registered ) : ?>
+			<p>
+				<label>
+					<input type="checkbox" name="includes_vat" value="1">
+					<?php esc_html_e( 'This amount includes VAT (15%)', 'bizupkeep-astra-child' ); ?>
+				</label>
+			</p>
+		<?php endif; ?>
+
+		<label for="bizupkeep-bk-description"><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-description" name="description" maxlength="500">
+
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Capture Transaction', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+	<?php
+}
+
+/**
+ * Render the read-only "Chart of Accounts" tab.
+ */
+function bizupkeep_child_render_bookkeeping_accounts_tab( Company $company ): void {
+	$accounts = bizupkeep_child_bookkeeping_all_accounts( $company->getUuid() );
+	?>
+	<table class="bizupkeep-bookkeeping-table">
+		<thead>
+			<tr>
+				<th><?php esc_html_e( 'Code', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Name', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Type', 'bizupkeep-astra-child' ); ?></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php foreach ( $accounts as $account ) : ?>
+				<tr>
+					<td><?php echo esc_html( $account->code ); ?></td>
+					<td><?php echo esc_html( $account->name ); ?></td>
+					<td><?php echo esc_html( $account->type->label() ); ?></td>
+				</tr>
+			<?php endforeach; ?>
+		</tbody>
+	</table>
+	<?php
+}
+
+/**
+ * Render the "Statements" tab: Trial Balance, Income Statement and
+ * Balance Sheet for the requested date range/as-of date, each in its
+ * own table. Any LedgerIntegrityException (or other BookkeepingException)
+ * is shown as a generic message rather than fataling the page - a real
+ * occurrence would indicate a data problem worth a client contacting
+ * support about, not something this page can resolve itself.
+ */
+function bizupkeep_child_render_bookkeeping_statements_tab( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$range = bizupkeep_child_bookkeeping_parse_range();
+	$as_of = bizupkeep_child_bookkeeping_parse_as_of();
+	?>
+	<form method="get" class="bizupkeep-bookkeeping-range-form">
+		<input type="hidden" name="tab" value="statements">
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+		<label><?php esc_html_e( 'From', 'bizupkeep-astra-child' ); ?>
+			<input type="date" name="from" value="<?php echo esc_attr( null !== $range->from ? $range->from->format( 'Y-m-d' ) : '' ); ?>">
+		</label>
+		<label><?php esc_html_e( 'To', 'bizupkeep-astra-child' ); ?>
+			<input type="date" name="to" value="<?php echo esc_attr( $range->to->format( 'Y-m-d' ) ); ?>">
+		</label>
+		<label><?php esc_html_e( 'Balance Sheet as of', 'bizupkeep-astra-child' ); ?>
+			<input type="date" name="as_of" value="<?php echo esc_attr( $as_of->format( 'Y-m-d' ) ); ?>">
+		</label>
+		<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Update', 'bizupkeep-astra-child' ); ?></button>
+	</form>
+
+	<?php
+	try {
+		$statements    = bizhub()->container()->get( FinancialStatementsServiceInterface::class );
+		$trial_balance = $statements->trialBalance( $company->getUuid(), $range );
+		$income        = $statements->incomeStatement( $company->getUuid(), $range );
+		$balance_sheet = $statements->balanceSheet( $company->getUuid(), $as_of );
+	} catch ( \Throwable $e ) {
+		echo '<p>' . esc_html__( 'Statements could not be generated for this range - please try again.', 'bizupkeep-astra-child' ) . '</p>';
+		return;
+	}
+	?>
+
+	<h2><?php esc_html_e( 'Trial Balance', 'bizupkeep-astra-child' ); ?></h2>
+	<table class="bizupkeep-bookkeeping-table">
+		<thead>
+			<tr>
+				<th><?php esc_html_e( 'Account', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Debit', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Credit', 'bizupkeep-astra-child' ); ?></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php foreach ( $trial_balance->rows as $row ) : ?>
+				<tr>
+					<td><?php echo esc_html( $row->code . ' - ' . $row->name ); ?></td>
+					<td><?php echo esc_html( $row->debit->isZero() ? '' : $row->debit->format() ); ?></td>
+					<td><?php echo esc_html( $row->credit->isZero() ? '' : $row->credit->format() ); ?></td>
+				</tr>
+			<?php endforeach; ?>
+			<tr>
+				<td><strong><?php esc_html_e( 'Total', 'bizupkeep-astra-child' ); ?></strong></td>
+				<td><strong><?php echo esc_html( $trial_balance->totalDebit->format() ); ?></strong></td>
+				<td><strong><?php echo esc_html( $trial_balance->totalCredit->format() ); ?></strong></td>
+			</tr>
+		</tbody>
+	</table>
+
+	<h2><?php esc_html_e( 'Income Statement', 'bizupkeep-astra-child' ); ?></h2>
+	<table class="bizupkeep-bookkeeping-table">
+		<tbody>
+			<?php foreach ( $income->incomeRows as $row ) : ?>
+				<tr><td><?php echo esc_html( $row->name ); ?></td><td><?php echo esc_html( $row->net->format() ); ?></td></tr>
+			<?php endforeach; ?>
+			<tr><td><strong><?php esc_html_e( 'Total Income', 'bizupkeep-astra-child' ); ?></strong></td><td><strong><?php echo esc_html( $income->totalIncome->format() ); ?></strong></td></tr>
+			<?php foreach ( $income->expenseRows as $row ) : ?>
+				<tr><td><?php echo esc_html( $row->name ); ?></td><td><?php echo esc_html( $row->net->format() ); ?></td></tr>
+			<?php endforeach; ?>
+			<tr><td><strong><?php esc_html_e( 'Total Expenses', 'bizupkeep-astra-child' ); ?></strong></td><td><strong><?php echo esc_html( $income->totalExpenses->format() ); ?></strong></td></tr>
+			<tr><td><strong><?php esc_html_e( 'Net Income', 'bizupkeep-astra-child' ); ?></strong></td><td><strong><?php echo esc_html( $income->netIncome->format() ); ?></strong></td></tr>
+		</tbody>
+	</table>
+
+	<h2><?php esc_html_e( 'Balance Sheet', 'bizupkeep-astra-child' ); ?></h2>
+	<table class="bizupkeep-bookkeeping-table">
+		<tbody>
+			<tr><td colspan="2"><strong><?php esc_html_e( 'Assets', 'bizupkeep-astra-child' ); ?></strong></td></tr>
+			<?php foreach ( $balance_sheet->assetRows as $row ) : ?>
+				<tr><td><?php echo esc_html( $row->name ); ?></td><td><?php echo esc_html( $row->net->format() ); ?></td></tr>
+			<?php endforeach; ?>
+			<tr><td><strong><?php esc_html_e( 'Total Assets', 'bizupkeep-astra-child' ); ?></strong></td><td><strong><?php echo esc_html( $balance_sheet->totalAssets->format() ); ?></strong></td></tr>
+
+			<tr><td colspan="2"><strong><?php esc_html_e( 'Liabilities', 'bizupkeep-astra-child' ); ?></strong></td></tr>
+			<?php foreach ( $balance_sheet->liabilityRows as $row ) : ?>
+				<tr><td><?php echo esc_html( $row->name ); ?></td><td><?php echo esc_html( $row->net->format() ); ?></td></tr>
+			<?php endforeach; ?>
+			<tr><td><strong><?php esc_html_e( 'Total Liabilities', 'bizupkeep-astra-child' ); ?></strong></td><td><strong><?php echo esc_html( $balance_sheet->totalLiabilities->format() ); ?></strong></td></tr>
+
+			<tr><td colspan="2"><strong><?php esc_html_e( 'Equity', 'bizupkeep-astra-child' ); ?></strong></td></tr>
+			<?php foreach ( $balance_sheet->equityRows as $row ) : ?>
+				<tr><td><?php echo esc_html( $row->name ); ?></td><td><?php echo esc_html( $row->net->format() ); ?></td></tr>
+			<?php endforeach; ?>
+			<tr><td><?php esc_html_e( 'Retained Earnings (prior years)', 'bizupkeep-astra-child' ); ?></td><td><?php echo esc_html( $balance_sheet->priorYearsEarnings->format() ); ?></td></tr>
+			<tr><td><?php esc_html_e( 'Current Year Earnings', 'bizupkeep-astra-child' ); ?></td><td><?php echo esc_html( $balance_sheet->currentYearEarnings->format() ); ?></td></tr>
+			<tr><td><strong><?php esc_html_e( 'Total Equity', 'bizupkeep-astra-child' ); ?></strong></td><td><strong><?php echo esc_html( $balance_sheet->totalEquity->format() ); ?></strong></td></tr>
+		</tbody>
+	</table>
+
+	<?php if ( bizupkeep_child_bookkeeping_is_vat_registered( $company->getUuid() ) ) : ?>
+		<?php $vat_summary = $statements->vatSummary( $company->getUuid(), $range ); ?>
+		<h2><?php esc_html_e( 'VAT Summary', 'bizupkeep-astra-child' ); ?></h2>
+		<table class="bizupkeep-bookkeeping-table">
+			<tbody>
+				<tr><td><?php esc_html_e( 'Output VAT (on sales)', 'bizupkeep-astra-child' ); ?></td><td><?php echo esc_html( $vat_summary->outputVat->format() ); ?></td></tr>
+				<tr><td><?php esc_html_e( 'Input VAT (on purchases)', 'bizupkeep-astra-child' ); ?></td><td><?php echo esc_html( $vat_summary->inputVat->format() ); ?></td></tr>
+				<tr>
+					<td><strong>
+						<?php
+						echo esc_html(
+							$vat_summary->netVatPayable->isNegative()
+								? __( 'Net VAT Refundable', 'bizupkeep-astra-child' )
+								: __( 'Net VAT Payable', 'bizupkeep-astra-child' )
+						);
+						?>
+					</strong></td>
+					<td><strong><?php echo esc_html( $vat_summary->netVatPayable->format() ); ?></strong></td>
+				</tr>
+			</tbody>
+		</table>
+	<?php endif; ?>
+	<?php
+}
+
+/**
+ * Render the "Export" tab: a date range plus one download link per
+ * supported platform. Each link is a GET request handled by
+ * bizupkeep_child_handle_bookkeeping_export_request() on
+ * template_redirect - no form/POST needed since exporting has no side
+ * effects.
+ */
+function bizupkeep_child_render_bookkeeping_export_tab( Company $company ): void {
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		bizupkeep_child_render_bookkeeping_subscription_locked_notice( $company );
+		return;
+	}
+
+	$range = bizupkeep_child_bookkeeping_parse_range();
+	?>
+	<form method="get" class="bizupkeep-bookkeeping-range-form">
+		<input type="hidden" name="tab" value="export">
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+		<label><?php esc_html_e( 'From', 'bizupkeep-astra-child' ); ?>
+			<input type="date" name="from" value="<?php echo esc_attr( null !== $range->from ? $range->from->format( 'Y-m-d' ) : '' ); ?>">
+		</label>
+		<label><?php esc_html_e( 'To', 'bizupkeep-astra-child' ); ?>
+			<input type="date" name="to" value="<?php echo esc_attr( $range->to->format( 'Y-m-d' ) ); ?>">
+		</label>
+		<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Update Range', 'bizupkeep-astra-child' ); ?></button>
+	</form>
+
+	<p>
+		<?php
+		$platforms = array(
+			'quickbooks' => __( 'QuickBooks Online', 'bizupkeep-astra-child' ),
+			'xero'       => __( 'Xero', 'bizupkeep-astra-child' ),
+			'sage'       => __( 'Sage', 'bizupkeep-astra-child' ),
+		);
+
+		foreach ( $platforms as $key => $label ) :
+			$url = add_query_arg(
+				array(
+					'tab' => 'export',
+					'company' => $company->getUuid(),
+					'from' => null !== $range->from ? $range->from->format( 'Y-m-d' ) : '',
+					'to' => $range->to->format( 'Y-m-d' ),
+					'bizupkeep_bookkeeping_export' => $key,
+				),
+				get_permalink()
+			);
+			?>
+			<a href="<?php echo esc_url( $url ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php
+				/* translators: %s: accounting platform name, e.g. "Xero". */
+				printf( esc_html__( 'Download for %s', 'bizupkeep-astra-child' ), esc_html( $label ) );
+				?>
+			</a>
+		<?php endforeach; ?>
+	</p>
+	<?php
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bank statement CSV import
+|--------------------------------------------------------------------------
+|
+| Upload -> map columns (a live GET-parameterized preview, no JS round
+| trip needed) -> review/categorize. Categorizing always goes through
+| BankImportServiceInterface::categorize()/bulkCategorize(), which
+| themselves only ever call TransactionCaptureServiceInterface - this
+| tab never posts to the ledger directly, and inherits the same
+| subscription gate every other paid action already has (bulk capture
+| is still capture).
+*/
+
+const BIZUPKEEP_BOOKKEEPING_IMPORT_TRANSIENT_PREFIX = 'bizupkeep_bk_import_';
+
+/**
+ * Short-lived storage for an uploaded CSV between the "upload" and
+ * "map" steps - this plugin has never written a file to disk and
+ * shouldn't start now for one temporary upload.
+ */
+function bizupkeep_child_bookkeeping_import_transient_key( int $wp_user_id, string $company_uuid ): string {
+	return BIZUPKEEP_BOOKKEEPING_IMPORT_TRANSIENT_PREFIX . md5( $wp_user_id . '|' . $company_uuid );
+}
+
+/**
+ * The two accounts a statement can be imported against - Bank Account
+ * and Cash on Hand, the only accounts BankImportService's
+ * resolvePaymentMethod() knows how to map back from.
+ *
+ * @return array<int,object>
+ */
+function bizupkeep_child_bookkeeping_import_source_accounts( string $company_uuid ): array {
+	return array_values( array_filter(
+		bizupkeep_child_bookkeeping_all_accounts( $company_uuid ),
+		static function ( $account ): bool {
+			return in_array(
+				$account->code,
+				array(
+					BookkeepingChartOfAccountsTemplate::CODE_BANK_ACCOUNT,
+					BookkeepingChartOfAccountsTemplate::CODE_CASH_ON_HAND,
+				),
+				true
+			);
+		}
+	) );
+}
+
+/**
+ * Parse+validate the column-mapping fields shared by the map step's
+ * GET-parameterized preview and its POST confirm submission.
+ *
+ * @param array<string,mixed> $source $_GET or $_POST.
+ *
+ * @return array{date_column:string,description_column:string,amount_style:ImportAmountStyle,amount_column:?string,debit_column:?string,credit_column:?string,date_format:string}|null
+ */
+function bizupkeep_child_bookkeeping_parse_mapping_fields( array $source ): ?array {
+	$date_column        = isset( $source['date_column'] ) ? sanitize_text_field( wp_unslash( $source['date_column'] ) ) : '';
+	$description_column = isset( $source['description_column'] ) ? sanitize_text_field( wp_unslash( $source['description_column'] ) ) : '';
+	$date_format        = isset( $source['date_format'] ) ? sanitize_text_field( wp_unslash( $source['date_format'] ) ) : 'd/m/Y';
+	$amount_style_raw   = isset( $source['amount_style'] ) ? sanitize_text_field( wp_unslash( $source['amount_style'] ) ) : 'signed';
+
+	if ( '' === $date_column || '' === $description_column ) {
+		return null;
+	}
+
+	$amount_style = 'debit_credit' === $amount_style_raw ? ImportAmountStyle::DebitCredit : ImportAmountStyle::Signed;
+
+	$amount_column = isset( $source['amount_column'] ) ? sanitize_text_field( wp_unslash( $source['amount_column'] ) ) : '';
+	$debit_column  = isset( $source['debit_column'] ) ? sanitize_text_field( wp_unslash( $source['debit_column'] ) ) : '';
+	$credit_column = isset( $source['credit_column'] ) ? sanitize_text_field( wp_unslash( $source['credit_column'] ) ) : '';
+
+	if ( ImportAmountStyle::Signed === $amount_style && '' === $amount_column ) {
+		return null;
+	}
+
+	if ( ImportAmountStyle::DebitCredit === $amount_style && ( '' === $debit_column || '' === $credit_column ) ) {
+		return null;
+	}
+
+	return array(
+		'date_column' => $date_column,
+		'description_column' => $description_column,
+		'amount_style' => $amount_style,
+		'amount_column' => '' !== $amount_column ? $amount_column : null,
+		'debit_column' => '' !== $debit_column ? $debit_column : null,
+		'credit_column' => '' !== $credit_column ? $credit_column : null,
+		'date_format' => $date_format,
+	);
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_import_upload' );
+
+/**
+ * Step 1: handle the statement upload. Stashes the raw CSV content in
+ * a transient and redirects to the mapping step - nothing is staged
+ * until the client confirms a column mapping.
+ */
+function bizupkeep_child_handle_bookkeeping_import_upload(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_import_upload_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_import_upload', 'bizupkeep_bookkeeping_import_upload_nonce' );
+
+	$company_uuid = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+
+	if ( null === $company ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'import', 'import_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	$redirect_base = add_query_arg( array( 'tab' => 'import', 'company' => $company->getUuid() ), get_permalink() );
+
+	$source_account_uuid = isset( $_POST['source_account'] ) ? sanitize_text_field( wp_unslash( $_POST['source_account'] ) ) : '';
+
+	if ( '' === $source_account_uuid
+		|| empty( $_FILES['statement']['tmp_name'] )
+		|| ! is_uploaded_file( $_FILES['statement']['tmp_name'] )
+	) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$csv_content = file_get_contents( $_FILES['statement']['tmp_name'] );
+
+	if ( false === $csv_content || '' === trim( $csv_content ) ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	set_transient(
+		bizupkeep_child_bookkeeping_import_transient_key( $wp_user_id, $company->getUuid() ),
+		array(
+			'csv' => $csv_content,
+			'source_account' => $source_account_uuid,
+		),
+		15 * MINUTE_IN_SECONDS
+	);
+
+	wp_safe_redirect( add_query_arg( 'step', 'map', $redirect_base ) );
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_import_confirm' );
+
+/**
+ * Step 2: handle the "Confirm & Import" submission - saves the chosen
+ * column mapping (reused next month) and stages every parseable row,
+ * deduped against previously-staged rows for this company.
+ */
+function bizupkeep_child_handle_bookkeeping_import_confirm(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_import_confirm_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_import_confirm', 'bizupkeep_bookkeeping_import_confirm_nonce' );
+
+	$company_uuid = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'import', 'import_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	$redirect_base = add_query_arg( array( 'tab' => 'import', 'company' => $company->getUuid() ), get_permalink() );
+
+	$transient_key = bizupkeep_child_bookkeeping_import_transient_key( $wp_user_id, $company->getUuid() );
+	$stashed       = get_transient( $transient_key );
+
+	if ( ! is_array( $stashed ) || empty( $stashed['csv'] ) || empty( $stashed['source_account'] ) ) {
+		wp_safe_redirect( add_query_arg( array( 'step' => 'upload', 'import_error' => '1' ), $redirect_base ) );
+		exit;
+	}
+
+	$mapping_fields = bizupkeep_child_bookkeeping_parse_mapping_fields( $_POST );
+
+	if ( null === $mapping_fields ) {
+		wp_safe_redirect( add_query_arg( array( 'step' => 'map', 'import_error' => '1' ), $redirect_base ) );
+		exit;
+	}
+
+	$bank_import = bizhub()->container()->get( BankImportServiceInterface::class );
+
+	$saved_mapping = $bank_import->saveMapping(
+		$company->getUuid(),
+		$mapping_fields['date_column'],
+		$mapping_fields['description_column'],
+		$mapping_fields['amount_style'],
+		$mapping_fields['amount_column'],
+		$mapping_fields['debit_column'],
+		$mapping_fields['credit_column'],
+		$mapping_fields['date_format']
+	);
+
+	$result = $bank_import->import( $company->getUuid(), $stashed['source_account'], $stashed['csv'], $saved_mapping );
+
+	delete_transient( $transient_key );
+
+	wp_safe_redirect( add_query_arg(
+		array(
+			'step' => 'upload',
+			'imported' => $result->imported,
+			'duplicates' => $result->duplicates,
+			'unparseable' => $result->unparseable,
+		),
+		$redirect_base
+	) );
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_categorize' );
+
+/**
+ * Categorize a single staged transaction into a real journal entry.
+ */
+function bizupkeep_child_handle_bookkeeping_categorize(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_categorize_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_categorize', 'bizupkeep_bookkeeping_categorize_nonce' );
+
+	$company_uuid   = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company        = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base  = add_query_arg( array( 'tab' => 'import', 'step' => 'review', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$staged_uuid      = isset( $_POST['staged'] ) ? sanitize_text_field( wp_unslash( $_POST['staged'] ) ) : '';
+	$category_account = isset( $_POST['category_account'] ) ? sanitize_text_field( wp_unslash( $_POST['category_account'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( BankImportServiceInterface::class )
+			->categorize( $company->getUuid(), $staged_uuid, $category_account, $wp_user_id );
+
+		wp_safe_redirect( add_query_arg( 'categorized', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_bulk_categorize' );
+
+/**
+ * Categorize many staged transactions at once with one shared category.
+ */
+function bizupkeep_child_handle_bookkeeping_bulk_categorize(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_bulk_categorize_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_bulk_categorize', 'bizupkeep_bookkeeping_bulk_categorize_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'import', 'step' => 'review', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$staged_uuids     = isset( $_POST['staged'] ) && is_array( $_POST['staged'] )
+		? array_map( 'sanitize_text_field', wp_unslash( $_POST['staged'] ) )
+		: array();
+	$category_account = isset( $_POST['category_account'] ) ? sanitize_text_field( wp_unslash( $_POST['category_account'] ) ) : '';
+
+	if ( array() === $staged_uuids || '' === $category_account ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	bizhub()->container()->get( BankImportServiceInterface::class )
+		->bulkCategorize( $company->getUuid(), $staged_uuids, $category_account, $wp_user_id );
+
+	wp_safe_redirect( add_query_arg( 'categorized', '1', $redirect_base ) );
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_ignore' );
+
+/**
+ * Mark a staged transaction ignored without ever posting it.
+ */
+function bizupkeep_child_handle_bookkeeping_ignore(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_ignore_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_ignore', 'bizupkeep_bookkeeping_ignore_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'import', 'step' => 'review', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$staged_uuid = isset( $_POST['staged'] ) ? sanitize_text_field( wp_unslash( $_POST['staged'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( BankImportServiceInterface::class )->ignore( $company->getUuid(), $staged_uuid );
+		wp_safe_redirect( add_query_arg( 'ignored', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'import_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+/**
+ * Render the "Import" tab: gated by subscription like Capture/Export
+ * (bulk capture is still capture), dispatches on ?step= to the
+ * upload/map/review sub-views.
+ */
+function bizupkeep_child_render_bookkeeping_import_tab( Company $company ): void {
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		bizupkeep_child_render_bookkeeping_subscription_locked_notice( $company );
+		return;
+	}
+
+	$step = isset( $_GET['step'] ) ? sanitize_key( wp_unslash( $_GET['step'] ) ) : 'upload';
+
+	if ( ! in_array( $step, array( 'upload', 'map', 'review' ), true ) ) {
+		$step = 'upload';
+	}
+
+	if ( 'map' === $step ) {
+		bizupkeep_child_render_bookkeeping_import_map_step( $company );
+	} elseif ( 'review' === $step ) {
+		bizupkeep_child_render_bookkeeping_import_review_step( $company );
+	} else {
+		bizupkeep_child_render_bookkeeping_import_upload_step( $company );
+	}
+}
+
+function bizupkeep_child_render_bookkeeping_import_upload_step( Company $company ): void {
+	$source_accounts = bizupkeep_child_bookkeeping_import_source_accounts( $company->getUuid() );
+
+	if ( isset( $_GET['imported'] ) ) {
+		printf(
+			'<p class="bizupkeep-status-pill">%s</p>',
+			esc_html( sprintf(
+				/* translators: 1: imported count, 2: duplicate count, 3: unparseable count. */
+				__( 'Imported %1$d transaction(s) - %2$d duplicate(s) skipped, %3$d row(s) could not be read.', 'bizupkeep-astra-child' ),
+				(int) $_GET['imported'],
+				isset( $_GET['duplicates'] ) ? (int) $_GET['duplicates'] : 0,
+				isset( $_GET['unparseable'] ) ? (int) $_GET['unparseable'] : 0
+			) )
+		);
+	}
+	?>
+	<form method="post" enctype="multipart/form-data" class="bizupkeep-upload-form">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_import_upload', 'bizupkeep_bookkeeping_import_upload_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+
+		<label for="bizupkeep-bk-source-account"><?php esc_html_e( 'Account', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-source-account" name="source_account">
+			<?php foreach ( $source_accounts as $account ) : ?>
+				<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+			<?php endforeach; ?>
+		</select>
+
+		<label for="bizupkeep-bk-statement"><?php esc_html_e( 'Bank Statement (CSV)', 'bizupkeep-astra-child' ); ?></label>
+		<input type="file" id="bizupkeep-bk-statement" name="statement" accept=".csv,text/csv" required>
+
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Upload Statement', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+
+	<?php bizupkeep_child_render_bookkeeping_import_review_link( $company ); ?>
+	<?php
+}
+
+function bizupkeep_child_render_bookkeeping_import_review_link( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$pending = bizhub()->container()->get( BankImportServiceInterface::class )->listPending( $company->getUuid() );
+
+	if ( array() === $pending ) {
+		return;
+	}
+
+	$url = add_query_arg( array( 'tab' => 'import', 'step' => 'review', 'company' => $company->getUuid() ), get_permalink() );
+	printf(
+		'<p><a href="%1$s" class="bizupkeep-btn bizupkeep-btn-secondary">%2$s</a></p>',
+		esc_url( $url ),
+		esc_html( sprintf(
+			/* translators: %d: number of transactions still awaiting review. */
+			__( 'Review %d transaction(s) awaiting categorization', 'bizupkeep-astra-child' ),
+			count( $pending )
+		) )
+	);
+}
+
+/**
+ * @param array<int,string> $headers
+ * @param array{date_column:string,description_column:string,amount_style:ImportAmountStyle,amount_column:?string,debit_column:?string,credit_column:?string,date_format:string}|null $fields
+ */
+function bizupkeep_child_render_bookkeeping_import_column_selects( array $headers, ?array $fields ): void {
+	$is_signed = null === $fields || ImportAmountStyle::Signed === $fields['amount_style'];
+	?>
+	<p>
+		<label for="bizupkeep-bk-date-column"><?php esc_html_e( 'Date column', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-date-column" name="date_column">
+			<?php foreach ( $headers as $header ) : ?>
+				<option value="<?php echo esc_attr( $header ); ?>" <?php selected( $fields['date_column'] ?? '', $header ); ?>>
+					<?php echo esc_html( $header ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<p>
+		<label for="bizupkeep-bk-date-format"><?php esc_html_e( 'Date format', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-date-format" name="date_format">
+			<?php foreach ( array( 'd/m/Y', 'Y/m/d', 'm/d/Y' ) as $format ) : ?>
+				<option value="<?php echo esc_attr( $format ); ?>" <?php selected( $fields['date_format'] ?? 'd/m/Y', $format ); ?>>
+					<?php echo esc_html( $format ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<p>
+		<label for="bizupkeep-bk-description-column"><?php esc_html_e( 'Description column', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-description-column" name="description_column">
+			<?php foreach ( $headers as $header ) : ?>
+				<option value="<?php echo esc_attr( $header ); ?>" <?php selected( $fields['description_column'] ?? '', $header ); ?>>
+					<?php echo esc_html( $header ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<p>
+		<label>
+			<input type="radio" name="amount_style" value="signed" <?php checked( $is_signed ); ?>>
+			<?php esc_html_e( 'Single signed amount column', 'bizupkeep-astra-child' ); ?>
+		</label>
+		<br>
+		<label>
+			<input type="radio" name="amount_style" value="debit_credit" <?php checked( ! $is_signed ); ?>>
+			<?php esc_html_e( 'Separate debit/credit columns', 'bizupkeep-astra-child' ); ?>
+		</label>
+	</p>
+	<p>
+		<label for="bizupkeep-bk-amount-column"><?php esc_html_e( 'Amount column (if signed)', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-amount-column" name="amount_column">
+			<option value="">-</option>
+			<?php foreach ( $headers as $header ) : ?>
+				<option value="<?php echo esc_attr( $header ); ?>" <?php selected( $fields['amount_column'] ?? '', $header ); ?>>
+					<?php echo esc_html( $header ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<p>
+		<label for="bizupkeep-bk-debit-column"><?php esc_html_e( 'Debit column (if separate)', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-debit-column" name="debit_column">
+			<option value="">-</option>
+			<?php foreach ( $headers as $header ) : ?>
+				<option value="<?php echo esc_attr( $header ); ?>" <?php selected( $fields['debit_column'] ?? '', $header ); ?>>
+					<?php echo esc_html( $header ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<p>
+		<label for="bizupkeep-bk-credit-column"><?php esc_html_e( 'Credit column (if separate)', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-credit-column" name="credit_column">
+			<option value="">-</option>
+			<?php foreach ( $headers as $header ) : ?>
+				<option value="<?php echo esc_attr( $header ); ?>" <?php selected( $fields['credit_column'] ?? '', $header ); ?>>
+					<?php echo esc_html( $header ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+	</p>
+	<?php
+}
+
+/**
+ * @param array{date_column:string,description_column:string,amount_style:ImportAmountStyle,amount_column:?string,debit_column:?string,credit_column:?string,date_format:string}|null $fields
+ */
+function bizupkeep_child_render_bookkeeping_import_hidden_mapping_fields( ?array $fields ): void {
+	if ( null === $fields ) {
+		return;
+	}
+
+	echo '<input type="hidden" name="date_column" value="' . esc_attr( $fields['date_column'] ) . '">';
+	echo '<input type="hidden" name="description_column" value="' . esc_attr( $fields['description_column'] ) . '">';
+	echo '<input type="hidden" name="amount_style" value="' . esc_attr( $fields['amount_style']->value ) . '">';
+	echo '<input type="hidden" name="amount_column" value="' . esc_attr( $fields['amount_column'] ?? '' ) . '">';
+	echo '<input type="hidden" name="debit_column" value="' . esc_attr( $fields['debit_column'] ?? '' ) . '">';
+	echo '<input type="hidden" name="credit_column" value="' . esc_attr( $fields['credit_column'] ?? '' ) . '">';
+	echo '<input type="hidden" name="date_format" value="' . esc_attr( $fields['date_format'] ) . '">';
+}
+
+function bizupkeep_child_render_bookkeeping_import_map_step( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+	$stashed    = get_transient( bizupkeep_child_bookkeeping_import_transient_key( $wp_user_id, $company->getUuid() ) );
+
+	if ( ! is_array( $stashed ) || empty( $stashed['csv'] ) ) {
+		echo '<p>' . esc_html__( 'Your upload has expired - please upload the statement again.', 'bizupkeep-astra-child' ) . '</p>';
+
+		return;
+	}
+
+	$bank_import   = bizhub()->container()->get( BankImportServiceInterface::class );
+	$csv_reader    = new BookkeepingCsvReader();
+	$headers       = $csv_reader->readHeaders( $stashed['csv'] );
+	$saved_mapping = $bank_import->getMapping( $company->getUuid() );
+
+	$fields = bizupkeep_child_bookkeeping_parse_mapping_fields( $_GET );
+
+	if ( null === $fields && null !== $saved_mapping && in_array( $saved_mapping->dateColumn, $headers, true ) ) {
+		$fields = array(
+			'date_column' => $saved_mapping->dateColumn,
+			'description_column' => $saved_mapping->descriptionColumn,
+			'amount_style' => $saved_mapping->amountStyle,
+			'amount_column' => $saved_mapping->amountColumn,
+			'debit_column' => $saved_mapping->debitColumn,
+			'credit_column' => $saved_mapping->creditColumn,
+			'date_format' => $saved_mapping->dateFormat,
+		);
+	}
+
+	$preview = array();
+
+	if ( null !== $fields ) {
+		try {
+			$mapping = new ImportMapping(
+				uuid: 'preview',
+				companyUuid: $company->getUuid(),
+				dateColumn: $fields['date_column'],
+				descriptionColumn: $fields['description_column'],
+				amountStyle: $fields['amount_style'],
+				amountColumn: $fields['amount_column'],
+				debitColumn: $fields['debit_column'],
+				creditColumn: $fields['credit_column'],
+				dateFormat: $fields['date_format'],
+				createdAt: new DateTimeImmutable(),
+			);
+			$preview = $bank_import->previewRows( $stashed['csv'], $mapping );
+		} catch ( \Throwable $e ) {
+			$preview = array();
+		}
+	}
+	?>
+	<h2><?php esc_html_e( 'Map Columns', 'bizupkeep-astra-child' ); ?></h2>
+
+	<form method="get" class="bizupkeep-bookkeeping-import-map-form">
+		<input type="hidden" name="tab" value="import">
+		<input type="hidden" name="step" value="map">
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+
+		<?php bizupkeep_child_render_bookkeeping_import_column_selects( $headers, $fields ); ?>
+
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+				<?php esc_html_e( 'Preview', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+
+	<?php if ( array() !== $preview ) : ?>
+		<h3><?php esc_html_e( 'Preview (first rows)', 'bizupkeep-astra-child' ); ?></h3>
+		<table class="bizupkeep-bookkeeping-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Date', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Amount', 'bizupkeep-astra-child' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $preview as $row ) : ?>
+					<tr>
+						<td><?php echo esc_html( $row['date'] ); ?></td>
+						<td><?php echo esc_html( $row['description'] ); ?></td>
+						<td><?php echo esc_html( $row['amount'] ); ?></td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+
+		<form method="post">
+			<?php wp_nonce_field( 'bizupkeep_bookkeeping_import_confirm', 'bizupkeep_bookkeeping_import_confirm_nonce' ); ?>
+			<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+			<?php bizupkeep_child_render_bookkeeping_import_hidden_mapping_fields( $fields ); ?>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Confirm & Import', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</form>
+	<?php elseif ( null !== $fields ) : ?>
+		<p><?php esc_html_e( 'No rows could be parsed with this mapping - please check your column selections.', 'bizupkeep-astra-child' ); ?></p>
+	<?php endif; ?>
+	<?php
+}
+
+/**
+ * Review step: NOT wrapped in a <form> itself (a <table> containing
+ * per-row mini-forms nested inside an outer form would be invalid
+ * HTML) - the bulk-categorize form renders separately, and each
+ * checkbox references it via the form="..." attribute instead of DOM
+ * nesting.
+ */
+function bizupkeep_child_render_bookkeeping_import_review_step( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$bank_import = bizhub()->container()->get( BankImportServiceInterface::class );
+	$pending     = $bank_import->listPending( $company->getUuid() );
+
+	$upload_url = add_query_arg( array( 'tab' => 'import', 'step' => 'upload', 'company' => $company->getUuid() ), get_permalink() );
+	printf(
+		'<p><a href="%1$s" class="bizupkeep-btn bizupkeep-btn-secondary">%2$s</a></p>',
+		esc_url( $upload_url ),
+		esc_html__( 'Upload Another Statement', 'bizupkeep-astra-child' )
+	);
+
+	if ( array() === $pending ) {
+		echo '<p>' . esc_html__( 'No transactions awaiting review.', 'bizupkeep-astra-child' ) . '</p>';
+
+		return;
+	}
+
+	$income_accounts  = bizupkeep_child_bookkeeping_income_accounts( $company->getUuid() );
+	$expense_accounts = bizupkeep_child_bookkeeping_expense_accounts( $company->getUuid() );
+	$all_accounts     = array_merge( $income_accounts, $expense_accounts );
+	$bulk_form_id     = 'bizupkeep-bk-bulk-categorize-form';
+	?>
+	<h2><?php esc_html_e( 'Review Imported Transactions', 'bizupkeep-astra-child' ); ?></h2>
+
+	<table class="bizupkeep-bookkeeping-table">
+		<thead>
+			<tr>
+				<th></th>
+				<th><?php esc_html_e( 'Date', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Amount', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Category', 'bizupkeep-astra-child' ); ?></th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php foreach ( $pending as $staged ) : ?>
+				<?php $candidates = $staged->isIncomeShaped() ? $income_accounts : $expense_accounts; ?>
+				<tr>
+					<td>
+						<input type="checkbox" name="staged[]" value="<?php echo esc_attr( $staged->uuid ); ?>" form="<?php echo esc_attr( $bulk_form_id ); ?>">
+					</td>
+					<td><?php echo esc_html( $staged->transactionDate->format( 'Y-m-d' ) ); ?></td>
+					<td><?php echo esc_html( $staged->description ); ?></td>
+					<td><?php echo esc_html( $staged->amount->format() ); ?></td>
+					<td>
+						<form method="post" style="display:inline;">
+							<?php wp_nonce_field( 'bizupkeep_bookkeeping_categorize', 'bizupkeep_bookkeeping_categorize_nonce' ); ?>
+							<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+							<input type="hidden" name="staged" value="<?php echo esc_attr( $staged->uuid ); ?>">
+							<select name="category_account">
+								<?php foreach ( $candidates as $account ) : ?>
+									<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+								<?php endforeach; ?>
+							</select>
+							<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+								<?php esc_html_e( 'Categorize', 'bizupkeep-astra-child' ); ?>
+							</button>
+						</form>
+					</td>
+					<td>
+						<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Ignore this transaction?', 'bizupkeep-astra-child' ) ); ?>');">
+							<?php wp_nonce_field( 'bizupkeep_bookkeeping_ignore', 'bizupkeep_bookkeeping_ignore_nonce' ); ?>
+							<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+							<input type="hidden" name="staged" value="<?php echo esc_attr( $staged->uuid ); ?>">
+							<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+								<?php esc_html_e( 'Ignore', 'bizupkeep-astra-child' ); ?>
+							</button>
+						</form>
+					</td>
+				</tr>
+			<?php endforeach; ?>
+		</tbody>
+	</table>
+
+	<form method="post" id="<?php echo esc_attr( $bulk_form_id ); ?>">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_bulk_categorize', 'bizupkeep_bookkeeping_bulk_categorize_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+		<p>
+			<?php esc_html_e( 'Bulk categorize selected rows as:', 'bizupkeep-astra-child' ); ?>
+			<select name="category_account">
+				<?php foreach ( $all_accounts as $account ) : ?>
+					<option value="<?php echo esc_attr( $account->uuid ); ?>">
+						<?php echo esc_html( $account->code . ' - ' . $account->name ); ?>
+					</option>
+				<?php endforeach; ?>
+			</select>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Categorize Selected', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+	<?php
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bookkeeping: Recurring Transactions
+|--------------------------------------------------------------------------
+|
+| A client-defined template (e.g. "R2,500 rent, monthly by bank") that
+| WP-Cron turns into a pending occurrence each time it comes due
+| (RecurringTransactionServiceProvider, bizupkeep-bookkeeping plugin).
+| Occurrences never post themselves - a client must confirm (optionally
+| editing the amount/date) or skip each one, mirroring the Import tab's
+| review-queue pattern exactly. Confirming still delegates to
+| TransactionCaptureServiceInterface, the same call Capture/Import
+| already make.
+*/
+
+/**
+ * Render the "Recurring" tab: gated by subscription like Capture/Import
+ * (a recurring template is just automated capture), Pending Review
+ * shown first since that is the thing needing attention, followed by
+ * the list of templates and the new-template form.
+ */
+function bizupkeep_child_render_bookkeeping_recurring_tab( Company $company ): void {
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		bizupkeep_child_render_bookkeeping_subscription_locked_notice( $company );
+		return;
+	}
+
+	bizupkeep_child_render_bookkeeping_recurring_pending_section( $company );
+	bizupkeep_child_render_bookkeeping_recurring_templates_section( $company );
+}
+
+function bizupkeep_child_render_bookkeeping_recurring_pending_section( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$recurring = bizhub()->container()->get( RecurringTransactionServiceInterface::class );
+	$pending   = $recurring->listPendingOccurrences( $company->getUuid() );
+
+	echo '<h2>' . esc_html__( 'Pending Review', 'bizupkeep-astra-child' ) . '</h2>';
+
+	if ( array() === $pending ) {
+		echo '<p>' . esc_html__( 'No recurring transactions awaiting review.', 'bizupkeep-astra-child' ) . '</p>';
+		return;
+	}
+
+	$templates_by_uuid = array();
+	foreach ( $recurring->listTemplates( $company->getUuid() ) as $template ) {
+		$templates_by_uuid[ $template->uuid ] = $template;
+	}
+
+	$bulk_form_id = 'bizupkeep-bk-recurring-confirm-all-form';
+	?>
+	<table class="bizupkeep-bookkeeping-table">
+		<thead>
+			<tr>
+				<th></th>
+				<th><?php esc_html_e( 'Due Date', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></th>
+				<th><?php esc_html_e( 'Amount', 'bizupkeep-astra-child' ); ?></th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php foreach ( $pending as $occurrence ) : ?>
+				<?php $template = $templates_by_uuid[ $occurrence->templateUuid ] ?? null; ?>
+				<?php if ( null === $template ) : ?>
+					<?php continue; ?>
+				<?php endif; ?>
+				<tr>
+					<td>
+						<input type="checkbox" name="occurrence[]" value="<?php echo esc_attr( $occurrence->uuid ); ?>" form="<?php echo esc_attr( $bulk_form_id ); ?>">
+					</td>
+					<td><?php echo esc_html( $template->description ); ?></td>
+					<td>
+						<form method="post" style="display:inline;">
+							<?php wp_nonce_field( 'bizupkeep_bookkeeping_recurring_confirm', 'bizupkeep_bookkeeping_recurring_confirm_nonce' ); ?>
+							<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+							<input type="hidden" name="occurrence" value="<?php echo esc_attr( $occurrence->uuid ); ?>">
+							<input type="date" name="due_date" value="<?php echo esc_attr( $occurrence->dueDate->format( 'Y-m-d' ) ); ?>">
+					</td>
+					<td>
+							<input type="number" step="0.01" min="0.01" name="amount" value="<?php echo esc_attr( number_format( $template->amount->toRands(), 2, '.', '' ) ); ?>">
+					</td>
+					<td>
+							<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+								<?php esc_html_e( 'Confirm & Post', 'bizupkeep-astra-child' ); ?>
+							</button>
+						</form>
+						<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Skip this occurrence?', 'bizupkeep-astra-child' ) ); ?>');">
+							<?php wp_nonce_field( 'bizupkeep_bookkeeping_recurring_skip', 'bizupkeep_bookkeeping_recurring_skip_nonce' ); ?>
+							<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+							<input type="hidden" name="occurrence" value="<?php echo esc_attr( $occurrence->uuid ); ?>">
+							<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+								<?php esc_html_e( 'Skip', 'bizupkeep-astra-child' ); ?>
+							</button>
+						</form>
+					</td>
+				</tr>
+			<?php endforeach; ?>
+		</tbody>
+	</table>
+
+	<form method="post" id="<?php echo esc_attr( $bulk_form_id ); ?>">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_recurring_confirm_all', 'bizupkeep_bookkeeping_recurring_confirm_all_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Confirm All Selected As-Is', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+	<?php
+}
+
+function bizupkeep_child_render_bookkeeping_recurring_templates_section( Company $company ): void {
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$recurring = bizhub()->container()->get( RecurringTransactionServiceInterface::class );
+	$templates = $recurring->listTemplates( $company->getUuid() );
+
+	echo '<h2>' . esc_html__( 'Recurring Templates', 'bizupkeep-astra-child' ) . '</h2>';
+
+	if ( array() !== $templates ) :
+		?>
+		<table class="bizupkeep-bookkeeping-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Type', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Amount', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Frequency', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Next Due', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Status', 'bizupkeep-astra-child' ); ?></th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $templates as $template ) : ?>
+					<tr>
+						<td>
+							<?php
+							echo esc_html(
+								BookkeepingTransactionType::Income === $template->transactionType
+									? __( 'Income', 'bizupkeep-astra-child' )
+									: __( 'Expense', 'bizupkeep-astra-child' )
+							);
+							?>
+						</td>
+						<td><?php echo esc_html( $template->amount->format() ); ?></td>
+						<td><?php echo esc_html( $template->description ); ?></td>
+						<td><?php echo esc_html( $template->frequency->label() ); ?></td>
+						<td><?php echo esc_html( $template->nextDueDate->format( 'Y-m-d' ) ); ?></td>
+						<td>
+							<?php
+							echo esc_html(
+								$template->isActive
+									? __( 'Active', 'bizupkeep-astra-child' )
+									: __( 'Paused', 'bizupkeep-astra-child' )
+							);
+							?>
+						</td>
+						<td>
+							<form method="post" style="display:inline;">
+								<?php wp_nonce_field( 'bizupkeep_bookkeeping_recurring_toggle', 'bizupkeep_bookkeeping_recurring_toggle_nonce' ); ?>
+								<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+								<input type="hidden" name="template" value="<?php echo esc_attr( $template->uuid ); ?>">
+								<input type="hidden" name="active" value="<?php echo esc_attr( $template->isActive ? '0' : '1' ); ?>">
+								<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+									<?php echo esc_html( $template->isActive ? __( 'Pause', 'bizupkeep-astra-child' ) : __( 'Resume', 'bizupkeep-astra-child' ) ); ?>
+								</button>
+							</form>
+							<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Delete this recurring template? This cannot be undone.', 'bizupkeep-astra-child' ) ); ?>');">
+								<?php wp_nonce_field( 'bizupkeep_bookkeeping_recurring_delete', 'bizupkeep_bookkeeping_recurring_delete_nonce' ); ?>
+								<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+								<input type="hidden" name="template" value="<?php echo esc_attr( $template->uuid ); ?>">
+								<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary">
+									<?php esc_html_e( 'Delete', 'bizupkeep-astra-child' ); ?>
+								</button>
+							</form>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php
+	endif;
+
+	bizupkeep_child_render_bookkeeping_recurring_new_template_form( $company );
+}
+
+function bizupkeep_child_render_bookkeeping_recurring_new_template_form( Company $company ): void {
+	$income_accounts  = bizupkeep_child_bookkeeping_income_accounts( $company->getUuid() );
+	$expense_accounts = bizupkeep_child_bookkeeping_expense_accounts( $company->getUuid() );
+	$vat_registered   = bizupkeep_child_bookkeeping_is_vat_registered( $company->getUuid() );
+	?>
+	<h3><?php esc_html_e( 'New Recurring Transaction', 'bizupkeep-astra-child' ); ?></h3>
+	<form method="post" class="bizupkeep-upload-form bizupkeep-bookkeeping-capture-form">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_recurring_create', 'bizupkeep_bookkeeping_recurring_create_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+
+		<p>
+			<label>
+				<input type="radio" name="transaction_type" value="income" checked
+					onclick="document.getElementById('bizupkeep-bk-rec-income-category').style.display='block';document.getElementById('bizupkeep-bk-rec-expense-category').style.display='none';">
+				<?php esc_html_e( 'Income', 'bizupkeep-astra-child' ); ?>
+			</label>
+			&nbsp;&nbsp;
+			<label>
+				<input type="radio" name="transaction_type" value="expense"
+					onclick="document.getElementById('bizupkeep-bk-rec-income-category').style.display='none';document.getElementById('bizupkeep-bk-rec-expense-category').style.display='block';">
+				<?php esc_html_e( 'Expense', 'bizupkeep-astra-child' ); ?>
+			</label>
+		</p>
+
+		<label for="bizupkeep-bk-rec-amount"><?php esc_html_e( 'Amount (R)', 'bizupkeep-astra-child' ); ?></label>
+		<input type="number" step="0.01" min="0.01" id="bizupkeep-bk-rec-amount" name="amount" required>
+
+		<div id="bizupkeep-bk-rec-income-category">
+			<label for="bizupkeep-bk-rec-income-select"><?php esc_html_e( 'Category', 'bizupkeep-astra-child' ); ?></label>
+			<select id="bizupkeep-bk-rec-income-select" name="category_account">
+				<?php foreach ( $income_accounts as $account ) : ?>
+					<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+				<?php endforeach; ?>
+			</select>
+		</div>
+
+		<div id="bizupkeep-bk-rec-expense-category" style="display:none;">
+			<label for="bizupkeep-bk-rec-expense-select"><?php esc_html_e( 'Category', 'bizupkeep-astra-child' ); ?></label>
+			<select id="bizupkeep-bk-rec-expense-select" name="category_account">
+				<?php foreach ( $expense_accounts as $account ) : ?>
+					<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+				<?php endforeach; ?>
+			</select>
+		</div>
+
+		<script>
+		// Same visible-select-only-submits pattern the Capture tab already uses.
+		(function () {
+			var incomeSelect = document.getElementById('bizupkeep-bk-rec-income-select');
+			var expenseSelect = document.getElementById('bizupkeep-bk-rec-expense-select');
+			function sync() {
+				var isIncome = document.querySelector('input[name="transaction_type"]:checked').value === 'income';
+				incomeSelect.name = isIncome ? 'category_account' : '';
+				expenseSelect.name = isIncome ? '' : 'category_account';
+			}
+			document.querySelectorAll('input[name="transaction_type"]').forEach(function (el) {
+				el.addEventListener('change', sync);
+			});
+			sync();
+		})();
+		</script>
+
+		<label for="bizupkeep-bk-rec-payment"><?php esc_html_e( 'Payment Method', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-rec-payment" name="payment_method">
+			<option value="bank"><?php esc_html_e( 'Bank', 'bizupkeep-astra-child' ); ?></option>
+			<option value="cash"><?php esc_html_e( 'Cash', 'bizupkeep-astra-child' ); ?></option>
+		</select>
+
+		<label for="bizupkeep-bk-rec-description"><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-rec-description" name="description" maxlength="500" required>
+
+		<?php if ( $vat_registered ) : ?>
+			<p>
+				<label>
+					<input type="checkbox" name="includes_vat" value="1">
+					<?php esc_html_e( 'This amount includes VAT (15%)', 'bizupkeep-astra-child' ); ?>
+				</label>
+			</p>
+		<?php endif; ?>
+
+		<label for="bizupkeep-bk-rec-frequency"><?php esc_html_e( 'Frequency', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-rec-frequency" name="frequency">
+			<?php foreach ( RecurringFrequency::cases() as $frequency ) : ?>
+				<option value="<?php echo esc_attr( $frequency->value ); ?>" <?php selected( RecurringFrequency::Monthly->value, $frequency->value ); ?>>
+					<?php echo esc_html( $frequency->label() ); ?>
+				</option>
+			<?php endforeach; ?>
+		</select>
+
+		<label for="bizupkeep-bk-rec-start-date"><?php esc_html_e( 'Start Date', 'bizupkeep-astra-child' ); ?></label>
+		<input type="date" id="bizupkeep-bk-rec-start-date" name="start_date" value="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>" required>
+
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Create Recurring Transaction', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+	<?php
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_recurring_create' );
+
+/**
+ * Handle the "New Recurring Transaction" form POST.
+ */
+function bizupkeep_child_handle_bookkeeping_recurring_create(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_recurring_create_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_recurring_create', 'bizupkeep_bookkeeping_recurring_create_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'recurring', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$type_raw       = isset( $_POST['transaction_type'] ) ? sanitize_text_field( wp_unslash( $_POST['transaction_type'] ) ) : '';
+	$amount_raw     = isset( $_POST['amount'] ) ? sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : '0';
+	$category       = isset( $_POST['category_account'] ) ? sanitize_text_field( wp_unslash( $_POST['category_account'] ) ) : '';
+	$payment_raw    = isset( $_POST['payment_method'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_method'] ) ) : '';
+	$description    = isset( $_POST['description'] ) ? sanitize_text_field( wp_unslash( $_POST['description'] ) ) : '';
+	$frequency_raw  = isset( $_POST['frequency'] ) ? sanitize_text_field( wp_unslash( $_POST['frequency'] ) ) : 'monthly';
+	$start_date_raw = isset( $_POST['start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['start_date'] ) ) : '';
+
+	// Nonce already verified above; a checkbox's mere presence is the only signal needed here.
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing
+	$includes_vat = isset( $_POST['includes_vat'] ) && bizupkeep_child_bookkeeping_is_vat_registered( $company->getUuid() );
+
+	$payment_method    = 'cash' === $payment_raw ? BookkeepingPaymentMethod::Cash : BookkeepingPaymentMethod::Bank;
+	$transaction_type  = 'income' === $type_raw ? BookkeepingTransactionType::Income : BookkeepingTransactionType::Expense;
+
+	try {
+		$frequency  = RecurringFrequency::from( $frequency_raw );
+		$start_date = '' !== $start_date_raw ? new \DateTimeImmutable( $start_date_raw ) : new \DateTimeImmutable();
+	} catch ( \Throwable $e ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	try {
+		bizhub()->container()->get( RecurringTransactionServiceInterface::class )->createTemplate(
+			$company->getUuid(),
+			$transaction_type,
+			\BizHub\Bookkeeping\Support\Money::fromRands( (float) $amount_raw ),
+			$category,
+			$payment_method,
+			$description,
+			$includes_vat,
+			$frequency,
+			$start_date
+		);
+
+		wp_safe_redirect( add_query_arg( 'recurring_created', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_recurring_confirm' );
+
+/**
+ * Confirm a single pending occurrence, applying any amount/date edits
+ * the client made in the Pending Review row.
+ */
+function bizupkeep_child_handle_bookkeeping_recurring_confirm(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_recurring_confirm_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_recurring_confirm', 'bizupkeep_bookkeeping_recurring_confirm_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'recurring', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$occurrence_uuid = isset( $_POST['occurrence'] ) ? sanitize_text_field( wp_unslash( $_POST['occurrence'] ) ) : '';
+	$amount_raw      = isset( $_POST['amount'] ) ? sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : '';
+	$due_date_raw    = isset( $_POST['due_date'] ) ? sanitize_text_field( wp_unslash( $_POST['due_date'] ) ) : '';
+
+	$override_amount = '' !== $amount_raw ? \BizHub\Bookkeeping\Support\Money::fromRands( (float) $amount_raw ) : null;
+
+	try {
+		$override_date = '' !== $due_date_raw ? new \DateTimeImmutable( $due_date_raw ) : null;
+	} catch ( \Throwable $e ) {
+		$override_date = null;
+	}
+
+	try {
+		bizhub()->container()->get( RecurringTransactionServiceInterface::class )
+			->confirmOccurrence( $company->getUuid(), $occurrence_uuid, $wp_user_id, $override_amount, $override_date );
+
+		wp_safe_redirect( add_query_arg( 'recurring_confirmed', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_recurring_confirm_all' );
+
+/**
+ * Confirm every checked pending occurrence as-is (no amount/date
+ * overrides) - one bad row must never lose the rest of the batch,
+ * matching bulk_categorize()'s per-item resilience.
+ */
+function bizupkeep_child_handle_bookkeeping_recurring_confirm_all(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_recurring_confirm_all_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_recurring_confirm_all', 'bizupkeep_bookkeeping_recurring_confirm_all_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'recurring', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	// Nonce verified above; the array is only ever read as sanitized string UUIDs below.
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	$occurrence_uuids = isset( $_POST['occurrence'] ) && is_array( $_POST['occurrence'] )
+		? array_map( 'sanitize_text_field', wp_unslash( $_POST['occurrence'] ) )
+		: array();
+
+	if ( array() === $occurrence_uuids ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$recurring = bizhub()->container()->get( RecurringTransactionServiceInterface::class );
+
+	foreach ( $occurrence_uuids as $occurrence_uuid ) {
+		try {
+			$recurring->confirmOccurrence( $company->getUuid(), $occurrence_uuid, $wp_user_id );
+		} catch ( BookkeepingException $e ) {
+			continue;
+		}
+	}
+
+	wp_safe_redirect( add_query_arg( 'recurring_confirmed', '1', $redirect_base ) );
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_recurring_skip' );
+
+/**
+ * Mark a pending occurrence skipped without ever posting it.
+ */
+function bizupkeep_child_handle_bookkeeping_recurring_skip(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_recurring_skip_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_recurring_skip', 'bizupkeep_bookkeeping_recurring_skip_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'recurring', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$occurrence_uuid = isset( $_POST['occurrence'] ) ? sanitize_text_field( wp_unslash( $_POST['occurrence'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( RecurringTransactionServiceInterface::class )
+			->skipOccurrence( $company->getUuid(), $occurrence_uuid );
+		wp_safe_redirect( add_query_arg( 'recurring_skipped', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_recurring_toggle' );
+
+/**
+ * Pause or resume a template - one handler for both, driven by the
+ * hidden "active" field the template row's own form sets to the
+ * opposite of its current state.
+ */
+function bizupkeep_child_handle_bookkeeping_recurring_toggle(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_recurring_toggle_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_recurring_toggle', 'bizupkeep_bookkeeping_recurring_toggle_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'recurring', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$template_uuid = isset( $_POST['template'] ) ? sanitize_text_field( wp_unslash( $_POST['template'] ) ) : '';
+	$make_active   = isset( $_POST['active'] ) && '1' === sanitize_text_field( wp_unslash( $_POST['active'] ) );
+
+	try {
+		$recurring = bizhub()->container()->get( RecurringTransactionServiceInterface::class );
+
+		if ( $make_active ) {
+			$recurring->resumeTemplate( $company->getUuid(), $template_uuid );
+		} else {
+			$recurring->pauseTemplate( $company->getUuid(), $template_uuid );
+		}
+
+		wp_safe_redirect( add_query_arg( 'recurring_template_updated', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_recurring_delete' );
+
+/**
+ * Delete a recurring template outright - unlike a journal entry, a
+ * template is a scheduling convenience, not an audit record.
+ */
+function bizupkeep_child_handle_bookkeeping_recurring_delete(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_recurring_delete_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_recurring_delete', 'bizupkeep_bookkeeping_recurring_delete_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'recurring', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$template_uuid = isset( $_POST['template'] ) ? sanitize_text_field( wp_unslash( $_POST['template'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( RecurringTransactionServiceInterface::class )
+			->deleteTemplate( $company->getUuid(), $template_uuid );
+
+		wp_safe_redirect( add_query_arg( 'recurring_template_updated', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'recurring_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bookkeeping: Customers
+|--------------------------------------------------------------------------
+|
+| A client's own customer - the party they invoice - entirely distinct
+| from BizHub's own Client/Company entities. Never a WP user, never
+| logs into any portal.
+*/
+
+/**
+ * Render the "Customers" tab: a list of the company's own customers
+ * plus a create/edit form. Gated by subscription like Capture/Recurring
+ * - invoicing is still paid capture functionality.
+ */
+function bizupkeep_child_render_bookkeeping_customers_tab( Company $company ): void {
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		bizupkeep_child_render_bookkeeping_subscription_locked_notice( $company );
+		return;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$invoicing = bizhub()->container()->get( InvoiceServiceInterface::class );
+	$customers = $invoicing->listCustomers( $company->getUuid() );
+
+	$edit_uuid = isset( $_GET['edit_customer'] ) ? sanitize_text_field( wp_unslash( $_GET['edit_customer'] ) ) : '';
+	$editing   = null;
+
+	if ( '' !== $edit_uuid ) {
+		foreach ( $customers as $customer ) {
+			if ( $customer->uuid === $edit_uuid ) {
+				$editing = $customer;
+			}
+		}
+	}
+
+	if ( array() !== $customers ) {
+		?>
+		<h2><?php esc_html_e( 'Customers', 'bizupkeep-astra-child' ); ?></h2>
+		<table class="bizupkeep-bookkeeping-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Name', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Email', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Phone', 'bizupkeep-astra-child' ); ?></th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $customers as $customer ) : ?>
+					<tr>
+						<td><?php echo esc_html( $customer->name ); ?></td>
+						<td><?php echo esc_html( $customer->email ); ?></td>
+						<td><?php echo esc_html( $customer->phone ); ?></td>
+						<td>
+							<a class="bizupkeep-btn bizupkeep-btn-secondary" href="<?php echo esc_url( add_query_arg( array( 'tab' => 'customers', 'company' => $company->getUuid(), 'edit_customer' => $customer->uuid ), get_permalink() ) ); ?>">
+								<?php esc_html_e( 'Edit', 'bizupkeep-astra-child' ); ?>
+							</a>
+							<a class="bizupkeep-btn bizupkeep-btn-secondary" href="<?php echo esc_url( add_query_arg( array( 'tab' => 'customers', 'company' => $company->getUuid(), 'bizupkeep_bookkeeping_statement_customer' => $customer->uuid ), get_permalink() ) ); ?>">
+								<?php esc_html_e( 'Statement', 'bizupkeep-astra-child' ); ?>
+							</a>
+							<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Delete this customer?', 'bizupkeep-astra-child' ) ); ?>');">
+								<?php wp_nonce_field( 'bizupkeep_bookkeeping_customer_delete', 'bizupkeep_bookkeeping_customer_delete_nonce' ); ?>
+								<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+								<input type="hidden" name="customer" value="<?php echo esc_attr( $customer->uuid ); ?>">
+								<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Delete', 'bizupkeep-astra-child' ); ?></button>
+							</form>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php
+	}
+	?>
+
+	<h3><?php echo esc_html( null !== $editing ? __( 'Edit Customer', 'bizupkeep-astra-child' ) : __( 'New Customer', 'bizupkeep-astra-child' ) ); ?></h3>
+	<form method="post" class="bizupkeep-upload-form">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_customer_save', 'bizupkeep_bookkeeping_customer_save_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+		<?php if ( null !== $editing ) : ?>
+			<input type="hidden" name="customer" value="<?php echo esc_attr( $editing->uuid ); ?>">
+		<?php endif; ?>
+
+		<label for="bizupkeep-bk-cust-name"><?php esc_html_e( 'Name', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-name" name="customer_name" value="<?php echo esc_attr( $editing->name ?? '' ); ?>" required>
+
+		<label for="bizupkeep-bk-cust-email"><?php esc_html_e( 'Email', 'bizupkeep-astra-child' ); ?></label>
+		<input type="email" id="bizupkeep-bk-cust-email" name="email" value="<?php echo esc_attr( $editing->email ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-phone"><?php esc_html_e( 'Phone', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-phone" name="phone" value="<?php echo esc_attr( $editing->phone ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-address1"><?php esc_html_e( 'Address Line 1', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-address1" name="address_line_1" value="<?php echo esc_attr( $editing->addressLine1 ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-address2"><?php esc_html_e( 'Address Line 2', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-address2" name="address_line_2" value="<?php echo esc_attr( $editing->addressLine2 ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-suburb"><?php esc_html_e( 'Suburb', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-suburb" name="suburb" value="<?php echo esc_attr( $editing->suburb ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-city"><?php esc_html_e( 'City', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-city" name="city" value="<?php echo esc_attr( $editing->city ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-province"><?php esc_html_e( 'Province', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-province" name="province" value="<?php echo esc_attr( $editing->province ?? '' ); ?>">
+
+		<label for="bizupkeep-bk-cust-postal"><?php esc_html_e( 'Postal Code', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-cust-postal" name="postal_code" value="<?php echo esc_attr( $editing->postalCode ?? '' ); ?>">
+
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php echo esc_html( null !== $editing ? __( 'Save Changes', 'bizupkeep-astra-child' ) : __( 'Create Customer', 'bizupkeep-astra-child' ) ); ?>
+			</button>
+		</p>
+	</form>
+	<?php
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_customer_save' );
+
+/**
+ * Handle the "New/Edit Customer" form POST - creates or updates
+ * depending on whether a "customer" UUID was submitted.
+ */
+function bizupkeep_child_handle_bookkeeping_customer_save(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_customer_save_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_customer_save', 'bizupkeep_bookkeeping_customer_save_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'customers', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'customer_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$customer_uuid = isset( $_POST['customer'] ) ? sanitize_text_field( wp_unslash( $_POST['customer'] ) ) : '';
+	// 'name' is a reserved WordPress public query var (WP::parse_request() reads it from $_POST too,
+	// for ?name=post-slug permalink lookups) - a POST field literally called "name" causes WordPress's
+	// own routing to 404 the request before it ever reaches this handler. Field is "customer_name" instead.
+	$name          = isset( $_POST['customer_name'] ) ? sanitize_text_field( wp_unslash( $_POST['customer_name'] ) ) : '';
+	$email         = isset( $_POST['email'] ) ? sanitize_email( wp_unslash( $_POST['email'] ) ) : '';
+	$phone         = isset( $_POST['phone'] ) ? sanitize_text_field( wp_unslash( $_POST['phone'] ) ) : '';
+	$address_1     = isset( $_POST['address_line_1'] ) ? sanitize_text_field( wp_unslash( $_POST['address_line_1'] ) ) : '';
+	$address_2     = isset( $_POST['address_line_2'] ) ? sanitize_text_field( wp_unslash( $_POST['address_line_2'] ) ) : '';
+	$suburb        = isset( $_POST['suburb'] ) ? sanitize_text_field( wp_unslash( $_POST['suburb'] ) ) : '';
+	$city          = isset( $_POST['city'] ) ? sanitize_text_field( wp_unslash( $_POST['city'] ) ) : '';
+	$province      = isset( $_POST['province'] ) ? sanitize_text_field( wp_unslash( $_POST['province'] ) ) : '';
+	$postal_code   = isset( $_POST['postal_code'] ) ? sanitize_text_field( wp_unslash( $_POST['postal_code'] ) ) : '';
+
+	$invoicing = bizhub()->container()->get( InvoiceServiceInterface::class );
+
+	try {
+		if ( '' !== $customer_uuid ) {
+			$invoicing->updateCustomer( $company->getUuid(), $customer_uuid, $name, $email, $phone, $address_1, $address_2, $suburb, $city, $province, $postal_code );
+		} else {
+			$invoicing->createCustomer( $company->getUuid(), $name, $email, $phone, $address_1, $address_2, $suburb, $city, $province, $postal_code );
+		}
+
+		wp_safe_redirect( add_query_arg( 'customer_saved', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'customer_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_customer_delete' );
+
+/**
+ * Handle deleting a customer.
+ */
+function bizupkeep_child_handle_bookkeeping_customer_delete(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_customer_delete_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_customer_delete', 'bizupkeep_bookkeeping_customer_delete_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'customers', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'customer_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$customer_uuid = isset( $_POST['customer'] ) ? sanitize_text_field( wp_unslash( $_POST['customer'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( InvoiceServiceInterface::class )->deleteCustomer( $company->getUuid(), $customer_uuid );
+		wp_safe_redirect( add_query_arg( 'customer_deleted', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'customer_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_statement_download' );
+
+/**
+ * Stream a customer's statement of account as a PDF - GET request, no
+ * side effects, same streaming pattern as
+ * bizupkeep_child_handle_bookkeeping_export_request().
+ */
+function bizupkeep_child_handle_bookkeeping_statement_download(): void {
+	if ( ! isset( $_GET['bizupkeep_bookkeeping_statement_customer'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( get_permalink() );
+		exit;
+	}
+
+	$company_uuid = isset( $_GET['company'] ) ? sanitize_text_field( wp_unslash( $_GET['company'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+
+	if ( null === $company || ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'customers', 'customer_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	$customer_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_bookkeeping_statement_customer'] ) );
+	$range         = bizupkeep_child_bookkeeping_parse_range();
+
+	try {
+		$pdf = bizhub()->container()->get( InvoiceServiceInterface::class )
+			->generateStatementPdf( $company->getUuid(), $customer_uuid, $range );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'customers', 'customer_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	nocache_headers();
+	header( 'Content-Type: application/pdf' );
+	header( 'Content-Disposition: attachment; filename="statement-' . sanitize_file_name( gmdate( 'Y-m-d' ) ) . '.pdf"' );
+	header( 'Content-Length: ' . strlen( $pdf ) );
+
+	echo $pdf; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- raw PDF file content, not HTML.
+	exit;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Bookkeeping: Invoices
+|--------------------------------------------------------------------------
+|
+| Invoicing a client's own customer. Sending an invoice or recording a
+| payment always delegates to InvoiceServiceInterface, which posts via
+| LedgerServiceInterface directly (a genuinely different economic event
+| shape - AR-based recognition - than the simplified "capture" the
+| Capture/Recurring tabs use), never through TransactionCaptureService.
+*/
+
+/**
+ * Fixed number of line-item rows the "New Invoice" form renders -
+ * mirrors ManualJournalEntryPage::MAX_LINES's exact reasoning: a small
+ * number of monthly line items doesn't justify a dynamic JS add/remove-
+ * row widget, unused rows are simply left blank and ignored on submit.
+ */
+const BIZUPKEEP_BOOKKEEPING_INVOICE_MAX_LINES = 8;
+
+/**
+ * Render the "Invoices" tab: a list of invoices with per-row actions,
+ * followed by the "New Invoice" form. Gated by subscription like
+ * Capture/Recurring.
+ */
+function bizupkeep_child_render_bookkeeping_invoices_tab( Company $company ): void {
+	if ( ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		bizupkeep_child_render_bookkeeping_subscription_locked_notice( $company );
+		return;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$invoicing = bizhub()->container()->get( InvoiceServiceInterface::class );
+	$invoices  = $invoicing->listInvoices( $company->getUuid() );
+
+	$customers_by_uuid = array();
+	foreach ( $invoicing->listCustomers( $company->getUuid() ) as $customer ) {
+		$customers_by_uuid[ $customer->uuid ] = $customer;
+	}
+
+	if ( array() !== $invoices ) {
+		?>
+		<h2><?php esc_html_e( 'Invoices', 'bizupkeep-astra-child' ); ?></h2>
+		<table class="bizupkeep-bookkeeping-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Number', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Customer', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Status', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Total', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Due', 'bizupkeep-astra-child' ); ?></th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php foreach ( $invoices as $invoice ) : ?>
+					<?php $customer = $customers_by_uuid[ $invoice->customerUuid ] ?? null; ?>
+					<tr>
+						<td><?php echo esc_html( $invoice->invoiceNumber ); ?></td>
+						<td><?php echo esc_html( null !== $customer ? $customer->name : '' ); ?></td>
+						<td><?php echo esc_html( $invoice->status->label() ); ?></td>
+						<td><?php echo esc_html( $invoice->total->format() ); ?></td>
+						<td><?php echo esc_html( $invoice->dueDate->format( 'Y-m-d' ) ); ?></td>
+						<td>
+							<a class="bizupkeep-btn bizupkeep-btn-secondary" href="<?php echo esc_url( add_query_arg( array( 'tab' => 'invoices', 'company' => $company->getUuid(), 'bizupkeep_bookkeeping_invoice_pdf' => $invoice->uuid ), get_permalink() ) ); ?>">
+								<?php esc_html_e( 'PDF', 'bizupkeep-astra-child' ); ?>
+							</a>
+							<?php if ( 'draft' === $invoice->status->value ) : ?>
+								<form method="post" style="display:inline;">
+									<?php wp_nonce_field( 'bizupkeep_bookkeeping_invoice_send', 'bizupkeep_bookkeeping_invoice_send_nonce' ); ?>
+									<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+									<input type="hidden" name="invoice" value="<?php echo esc_attr( $invoice->uuid ); ?>">
+									<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Send', 'bizupkeep-astra-child' ); ?></button>
+								</form>
+								<form method="post" style="display:inline;" onsubmit="return confirm('<?php echo esc_js( __( 'Void this draft invoice?', 'bizupkeep-astra-child' ) ); ?>');">
+									<?php wp_nonce_field( 'bizupkeep_bookkeeping_invoice_void', 'bizupkeep_bookkeeping_invoice_void_nonce' ); ?>
+									<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+									<input type="hidden" name="invoice" value="<?php echo esc_attr( $invoice->uuid ); ?>">
+									<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Void', 'bizupkeep-astra-child' ); ?></button>
+								</form>
+							<?php elseif ( 'sent' === $invoice->status->value ) : ?>
+								<form method="post" style="display:inline;">
+									<?php wp_nonce_field( 'bizupkeep_bookkeeping_invoice_resend', 'bizupkeep_bookkeeping_invoice_resend_nonce' ); ?>
+									<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+									<input type="hidden" name="invoice" value="<?php echo esc_attr( $invoice->uuid ); ?>">
+									<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Resend', 'bizupkeep-astra-child' ); ?></button>
+								</form>
+								<form method="post" style="display:inline;">
+									<?php wp_nonce_field( 'bizupkeep_bookkeeping_invoice_pay', 'bizupkeep_bookkeeping_invoice_pay_nonce' ); ?>
+									<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+									<input type="hidden" name="invoice" value="<?php echo esc_attr( $invoice->uuid ); ?>">
+									<select name="payment_method">
+										<option value="bank"><?php esc_html_e( 'Bank', 'bizupkeep-astra-child' ); ?></option>
+										<option value="cash"><?php esc_html_e( 'Cash', 'bizupkeep-astra-child' ); ?></option>
+									</select>
+									<button type="submit" class="bizupkeep-btn bizupkeep-btn-secondary"><?php esc_html_e( 'Record Payment', 'bizupkeep-astra-child' ); ?></button>
+								</form>
+							<?php endif; ?>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
+		<?php
+	}
+
+	bizupkeep_child_render_bookkeeping_invoice_create_form( $company, $invoicing );
+}
+
+function bizupkeep_child_render_bookkeeping_invoice_create_form( Company $company, InvoiceServiceInterface $invoicing ): void {
+	$customers = $invoicing->listCustomers( $company->getUuid() );
+
+	if ( array() === $customers ) {
+		echo '<h3>' . esc_html__( 'New Invoice', 'bizupkeep-astra-child' ) . '</h3>';
+		echo '<p>' . esc_html__( 'Add a customer first before creating an invoice.', 'bizupkeep-astra-child' ) . '</p>';
+		return;
+	}
+
+	$income_accounts = bizupkeep_child_bookkeeping_income_accounts( $company->getUuid() );
+	$vat_registered  = bizupkeep_child_bookkeeping_is_vat_registered( $company->getUuid() );
+	?>
+	<h3><?php esc_html_e( 'New Invoice', 'bizupkeep-astra-child' ); ?></h3>
+	<form method="post" class="bizupkeep-upload-form">
+		<?php wp_nonce_field( 'bizupkeep_bookkeeping_invoice_create', 'bizupkeep_bookkeeping_invoice_create_nonce' ); ?>
+		<input type="hidden" name="company" value="<?php echo esc_attr( $company->getUuid() ); ?>">
+
+		<label for="bizupkeep-bk-inv-customer"><?php esc_html_e( 'Customer', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-inv-customer" name="customer">
+			<?php foreach ( $customers as $customer ) : ?>
+				<option value="<?php echo esc_attr( $customer->uuid ); ?>"><?php echo esc_html( $customer->name ); ?></option>
+			<?php endforeach; ?>
+		</select>
+
+		<label for="bizupkeep-bk-inv-category"><?php esc_html_e( 'Revenue Category', 'bizupkeep-astra-child' ); ?></label>
+		<select id="bizupkeep-bk-inv-category" name="category_account">
+			<?php foreach ( $income_accounts as $account ) : ?>
+				<option value="<?php echo esc_attr( $account->uuid ); ?>"><?php echo esc_html( $account->name ); ?></option>
+			<?php endforeach; ?>
+		</select>
+
+		<label for="bizupkeep-bk-inv-date"><?php esc_html_e( 'Invoice Date', 'bizupkeep-astra-child' ); ?></label>
+		<input type="date" id="bizupkeep-bk-inv-date" name="invoice_date" value="<?php echo esc_attr( gmdate( 'Y-m-d' ) ); ?>" required>
+
+		<label for="bizupkeep-bk-inv-due"><?php esc_html_e( 'Due Date', 'bizupkeep-astra-child' ); ?></label>
+		<input type="date" id="bizupkeep-bk-inv-due" name="due_date" value="<?php echo esc_attr( gmdate( 'Y-m-d', strtotime( '+14 days' ) ) ); ?>" required>
+
+		<?php if ( $vat_registered ) : ?>
+			<p>
+				<label>
+					<input type="checkbox" name="includes_vat" value="1">
+					<?php esc_html_e( 'Line prices include VAT (15%)', 'bizupkeep-astra-child' ); ?>
+				</label>
+			</p>
+		<?php endif; ?>
+
+		<label for="bizupkeep-bk-inv-notes"><?php esc_html_e( 'Notes', 'bizupkeep-astra-child' ); ?></label>
+		<input type="text" id="bizupkeep-bk-inv-notes" name="notes" maxlength="500">
+
+		<table class="bizupkeep-bookkeeping-table">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Description', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Qty', 'bizupkeep-astra-child' ); ?></th>
+					<th><?php esc_html_e( 'Unit Price (R)', 'bizupkeep-astra-child' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php for ( $i = 0; $i < BIZUPKEEP_BOOKKEEPING_INVOICE_MAX_LINES; $i++ ) : ?>
+					<tr>
+						<td><input type="text" name="lines[<?php echo esc_attr( (string) $i ); ?>][description]" size="30"></td>
+						<td><input type="number" min="1" step="1" name="lines[<?php echo esc_attr( (string) $i ); ?>][quantity]" value="1" size="4"></td>
+						<td><input type="number" min="0" step="0.01" name="lines[<?php echo esc_attr( (string) $i ); ?>][unit_price]" size="10"></td>
+					</tr>
+				<?php endfor; ?>
+			</tbody>
+		</table>
+
+		<p>
+			<button type="submit" class="bizupkeep-btn bizupkeep-btn-primary">
+				<?php esc_html_e( 'Create Draft Invoice', 'bizupkeep-astra-child' ); ?>
+			</button>
+		</p>
+	</form>
+	<?php
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_invoice_create' );
+
+/**
+ * Handle the "New Invoice" form POST - builds InvoiceLineInput[] from
+ * the fixed set of line rows, skipping any left blank.
+ */
+function bizupkeep_child_handle_bookkeeping_invoice_create(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_invoice_create_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_invoice_create', 'bizupkeep_bookkeeping_invoice_create_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'invoices', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$customer_uuid = isset( $_POST['customer'] ) ? sanitize_text_field( wp_unslash( $_POST['customer'] ) ) : '';
+	$category      = isset( $_POST['category_account'] ) ? sanitize_text_field( wp_unslash( $_POST['category_account'] ) ) : '';
+	$notes         = isset( $_POST['notes'] ) ? sanitize_text_field( wp_unslash( $_POST['notes'] ) ) : '';
+	$vat_registered = bizupkeep_child_bookkeeping_is_vat_registered( $company_uuid );
+
+	// Nonce already verified above; a checkbox's mere presence is the only signal needed here.
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing
+	$includes_vat = isset( $_POST['includes_vat'] ) && $vat_registered;
+
+	try {
+		$invoice_date = new \DateTimeImmutable( isset( $_POST['invoice_date'] ) ? sanitize_text_field( wp_unslash( $_POST['invoice_date'] ) ) : 'now' );
+		$due_date     = new \DateTimeImmutable( isset( $_POST['due_date'] ) ? sanitize_text_field( wp_unslash( $_POST['due_date'] ) ) : 'now' );
+	} catch ( \Exception $e ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	// Nonce already verified above; every field read from this array is individually sanitized below.
+	// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	$raw_lines = isset( $_POST['lines'] ) && is_array( $_POST['lines'] ) ? wp_unslash( $_POST['lines'] ) : array();
+
+	$lines = array();
+	foreach ( $raw_lines as $row ) {
+		if ( ! is_array( $row ) ) {
+			continue;
+		}
+
+		$description = isset( $row['description'] ) ? sanitize_text_field( (string) $row['description'] ) : '';
+		$quantity    = isset( $row['quantity'] ) ? (int) $row['quantity'] : 0;
+		$unit_price  = isset( $row['unit_price'] ) ? (float) sanitize_text_field( (string) $row['unit_price'] ) : 0.0;
+
+		if ( '' === $description || $quantity < 1 || $unit_price <= 0 ) {
+			continue;
+		}
+
+		$lines[] = new InvoiceLineInput( $description, $quantity, BookkeepingMoney::fromRands( $unit_price ) );
+	}
+
+	try {
+		bizhub()->container()->get( InvoiceServiceInterface::class )->createInvoice(
+			$company->getUuid(),
+			$customer_uuid,
+			$category,
+			$includes_vat,
+			$invoice_date,
+			$due_date,
+			$notes,
+			$lines
+		);
+
+		wp_safe_redirect( add_query_arg( 'invoice_created', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_invoice_send' );
+
+/**
+ * Send a draft invoice: posts the AR/revenue/VAT entry and emails the
+ * PDF to the customer.
+ */
+function bizupkeep_child_handle_bookkeeping_invoice_send(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_invoice_send_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_invoice_send', 'bizupkeep_bookkeeping_invoice_send_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'invoices', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$invoice_uuid = isset( $_POST['invoice'] ) ? sanitize_text_field( wp_unslash( $_POST['invoice'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( InvoiceServiceInterface::class )->sendInvoice( $company->getUuid(), $invoice_uuid, $wp_user_id );
+		wp_safe_redirect( add_query_arg( 'invoice_sent', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_invoice_resend' );
+
+/**
+ * Re-email an already-sent invoice's PDF without re-posting.
+ */
+function bizupkeep_child_handle_bookkeeping_invoice_resend(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_invoice_resend_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_invoice_resend', 'bizupkeep_bookkeeping_invoice_resend_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'invoices', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$invoice_uuid = isset( $_POST['invoice'] ) ? sanitize_text_field( wp_unslash( $_POST['invoice'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( InvoiceServiceInterface::class )->resendInvoice( $company->getUuid(), $invoice_uuid );
+		wp_safe_redirect( add_query_arg( 'invoice_sent', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_invoice_pay' );
+
+/**
+ * Record a payment against a sent invoice.
+ */
+function bizupkeep_child_handle_bookkeeping_invoice_pay(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_invoice_pay_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	$wp_user_id = get_current_user_id();
+
+	if ( 0 === $wp_user_id ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_invoice_pay', 'bizupkeep_bookkeeping_invoice_pay_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'invoices', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$invoice_uuid   = isset( $_POST['invoice'] ) ? sanitize_text_field( wp_unslash( $_POST['invoice'] ) ) : '';
+	$payment_raw    = isset( $_POST['payment_method'] ) ? sanitize_text_field( wp_unslash( $_POST['payment_method'] ) ) : '';
+	$payment_method = 'cash' === $payment_raw ? BookkeepingPaymentMethod::Cash : BookkeepingPaymentMethod::Bank;
+
+	try {
+		bizhub()->container()->get( InvoiceServiceInterface::class )
+			->recordPayment( $company->getUuid(), $invoice_uuid, $payment_method, $wp_user_id );
+		wp_safe_redirect( add_query_arg( 'invoice_paid', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_invoice_void' );
+
+/**
+ * Void a draft invoice - never posted, so nothing to reverse.
+ */
+function bizupkeep_child_handle_bookkeeping_invoice_void(): void {
+	if ( ! isset( $_POST['bizupkeep_bookkeeping_invoice_void_nonce'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	check_admin_referer( 'bizupkeep_bookkeeping_invoice_void', 'bizupkeep_bookkeeping_invoice_void_nonce' );
+
+	$company_uuid  = isset( $_POST['company'] ) ? sanitize_text_field( wp_unslash( $_POST['company'] ) ) : '';
+	$company       = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+	$redirect_base = add_query_arg( array( 'tab' => 'invoices', 'company' => $company_uuid ), get_permalink() );
+
+	if ( null === $company || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+		exit;
+	}
+
+	$invoice_uuid = isset( $_POST['invoice'] ) ? sanitize_text_field( wp_unslash( $_POST['invoice'] ) ) : '';
+
+	try {
+		bizhub()->container()->get( InvoiceServiceInterface::class )->voidInvoice( $company->getUuid(), $invoice_uuid );
+		wp_safe_redirect( add_query_arg( 'invoice_voided', '1', $redirect_base ) );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( 'invoice_error', '1', $redirect_base ) );
+	}
+
+	exit;
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_invoice_pdf_download' );
+
+/**
+ * Stream a single invoice as a PDF - GET request, no side effects.
+ */
+function bizupkeep_child_handle_bookkeeping_invoice_pdf_download(): void {
+	if ( ! isset( $_GET['bizupkeep_bookkeeping_invoice_pdf'] ) || ! bizupkeep_child_is_bookkeeping_page() ) {
+		return;
+	}
+
+	if ( ! is_user_logged_in() ) {
+		wp_safe_redirect( wp_login_url( get_permalink() ) );
+		exit;
+	}
+
+	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		wp_safe_redirect( get_permalink() );
+		exit;
+	}
+
+	$company_uuid = isset( $_GET['company'] ) ? sanitize_text_field( wp_unslash( $_GET['company'] ) ) : '';
+	$company      = bizupkeep_child_get_owned_company( get_current_user_id(), $company_uuid );
+
+	if ( null === $company || ! bizupkeep_child_bookkeeping_subscription_active( $company->getUuid() ) ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'invoices', 'invoice_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	$invoice_uuid = sanitize_text_field( wp_unslash( $_GET['bizupkeep_bookkeeping_invoice_pdf'] ) );
+
+	try {
+		$pdf = bizhub()->container()->get( InvoiceServiceInterface::class )
+			->generateInvoicePdf( $company->getUuid(), $invoice_uuid );
+	} catch ( BookkeepingException $e ) {
+		wp_safe_redirect( add_query_arg( array( 'tab' => 'invoices', 'invoice_error' => '1' ), get_permalink() ) );
+		exit;
+	}
+
+	nocache_headers();
+	header( 'Content-Type: application/pdf' );
+	header( 'Content-Disposition: attachment; filename="' . sanitize_file_name( $invoice_uuid ) . '.pdf"' );
+	header( 'Content-Length: ' . strlen( $pdf ) );
+
+	echo $pdf; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- raw PDF file content, not HTML.
+	exit;
 }
