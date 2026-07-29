@@ -1,0 +1,32 @@
+name: PHP CI
+
+# Scoped to a syntax check only: this theme has no phpcs/phpstan
+# config, and its only PHPUnit suite (tests/e2e) requires a live
+# WordPress + MariaDB environment to be reachable (see
+# tests/e2e/bootstrap.php) - not something a stock GitHub Actions
+# runner can provide, so it isn't run here.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          coverage: none
+
+      - name: PHP syntax check
+        run: find . -type f -name "*.php" -not -path "./vendor/*" -print0 | xargs -0 -n1 php -l
