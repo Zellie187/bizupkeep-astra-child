@@ -1,5 +1,14 @@
 # BizUpKeep Astra Child - Changelog
 
+## 1.37.0
+- **Startup Stack brand redesign**: replaced the old navy/orange palette with the Startup Stack color system - Paper (#FFFDF8) / Ink (#1B1A2E) / Muted (#726F80) neutrals, three section tints (Peach/Teal/Violet), and three service accents each with a solid + soft variant (Bookkeeping/Coral, Socials/Teal, Tech Support/Violet). Gold (#FFC93C) is wired up as `.bizupkeep-package-badge--gold` but deliberately not applied anywhere yet - it's reserved for the Growth tier's "Save R350/month" badge, which doesn't exist on the site yet.
+- Every hardcoded hex color in `assets/css/custom.css` was swept to the new tokens; the four old CSS custom properties (`--bizupkeep-primary`/`-accent`/`-text`) are kept as aliases pointing at Ink so nothing silently breaks, but new work should use the named tokens directly.
+- Section backgrounds now rotate through the tints for visual variety (How It Works = Peach, Packages = Teal, Why Us = Violet, FAQ = Peach); Hero/CTA/Footer stay Ink (dark).
+- New `.bizupkeep-btn-coral`/`-teal`/`-violet` button variants and `.bizupkeep-package-card--bookkeeping`/`-socials`/`-tech` card variants (border + tinted wash + matching checkmark color) - only `--bookkeeping` is actually applied anywhere today (the homepage's "Bookkeeping Services" package card), since Socials and Tech Support have no section on the site yet. `--socials`/`--tech` are defined and ready for when they do.
+- **Fonts**: Space Grotesk (headings) and IBM Plex Sans (body), enqueued from Google Fonts in `bizupkeep_child_enqueue_assets()`.
+- Printable legal-document templates (POA/resolution/minutes inline `<style>` blocks in functions.php) were deliberately left as plain black-on-white Georgia serif - they're meant to look like conventional printable paperwork, not branded site pages.
+- Not visually verified in a browser - no live WordPress install was available while writing this change.
+
 ## 1.36.0
 - **My Bookkeeping's "Books" tab now embeds Stub** (https://developers.stub.africa) instead of BizUpKeep's own local ledger UI - replaces the Dashboard, Capture, Chart of Accounts, Statements, and Import tabs with Stub's embedded JS widgets (Cashflow, Income, Expenses, Profit, Bank Accounts, Bank Sync, Reports), rendered via `bizupkeep_child_render_stub_books_tab()`. No separate Stub login: a server-issued token (from the new `bizupkeep-stub` plugin) authenticates the widgets directly off the client's existing WordPress session, refreshed roughly every 50 minutes via `bizupkeep-stub`'s own authenticated REST route (tokens last an hour).
 - **Recurring, Customers, Invoices, and Export tabs are unchanged** - Stub has no equivalent for recurring templates or invoicing, so those keep running on BizUpKeep Bookkeeping's own services exactly as before.

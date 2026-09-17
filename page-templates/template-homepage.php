@@ -124,7 +124,7 @@ get_header();
 					</p>
 				</div>
 
-				<div class="bizupkeep-package-card">
+				<div class="bizupkeep-package-card bizupkeep-package-card--bookkeeping">
 					<h3 class="bizupkeep-package-title"><?php esc_html_e( 'Bookkeeping Services', 'bizupkeep-astra-child' ); ?></h3>
 					<p class="bizupkeep-package-price"><?php esc_html_e( 'From R300', 'bizupkeep-astra-child' ); ?></p>
 					<p><?php esc_html_e( 'Basic bookkeeping, done for you — with the option to export your data to Xero, QuickBooks, or Sage.', 'bizupkeep-astra-child' ); ?></p>
@@ -134,7 +134,7 @@ get_header();
 						<li><?php esc_html_e( 'Export-ready data, any time', 'bizupkeep-astra-child' ); ?></li>
 					</ul>
 					<p class="bizupkeep-package-cta">
-						<a href="<?php echo esc_url( home_url( '/contact-us/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Request a Call Back', 'bizupkeep-astra-child' ); ?></a>
+						<a href="<?php echo esc_url( home_url( '/contact-us/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-coral"><?php esc_html_e( 'Request a Call Back', 'bizupkeep-astra-child' ); ?></a>
 					</p>
 				</div>
 

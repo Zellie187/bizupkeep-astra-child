@@ -65,13 +65,26 @@ use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 use BizUpKeep\Core\Contracts\ServiceRepositoryInterface;
 use BizUpKeep\Core\Enums\ServiceVatTreatment;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.36.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.37.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
  * Enqueue parent and child theme styles/scripts.
+ *
+ * Space Grotesk (headings) / IBM Plex Sans (body) are the Startup
+ * Stack brand fonts - loaded from Google Fonts as a single request
+ * (weights chosen to cover every place custom.css sets font-weight)
+ * ahead of the stylesheets that reference them, so there's no
+ * flash-of-fallback-font on first paint.
  */
 function bizupkeep_child_enqueue_assets(): void {
+	wp_enqueue_style(
+		'bizupkeep-google-fonts',
+		'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap',
+		array(),
+		null
+	);
+
 	wp_enqueue_style(
 		'astra-parent-style',
 		get_template_directory_uri() . '/style.css',

@@ -1,18 +1,84 @@
 /**
  * BizUpKeep - custom front-end styles.
+ *
+ * Startup Stack brand system: Paper/Ink/Muted neutrals, three section
+ * tints, and three service accents (Bookkeeping/Coral, Socials/Teal,
+ * Tech Support/Violet) each with a solid + soft variant. Gold is
+ * reserved for the Growth tier's "Save R350/month" badge only - not
+ * used anywhere else, so it keeps reading as "the deal" rather than
+ * becoming just another brand color.
+ *
+ * Fonts: Space Grotesk (headings) / IBM Plex Sans (body), enqueued
+ * from Google Fonts in functions.php's bizupkeep_child_enqueue_assets().
+ *
+ * Only "Bookkeeping" currently has a real card to attach its accent to
+ * (see .bizupkeep-package-card--bookkeeping below, applied to the
+ * homepage's "Bookkeeping Services" package) - Socials and Tech
+ * Support have no section on the site yet, so .bizupkeep-accent-socials
+ * / .bizupkeep-accent-tech are defined and ready but currently unused.
  */
 
 :root {
-	--bizupkeep-primary: #1c3d5a;
-	--bizupkeep-accent: #f2994a;
-	--bizupkeep-text: #2b2b2b;
-	--bizupkeep-bg-light: #f7f8fa;
+	/* Base / neutrals */
+	--bizupkeep-paper: #FFFDF8;
+	--bizupkeep-ink: #1B1A2E;
+	--bizupkeep-muted: #726F80;
+
+	/* Derived neutrals (not part of the original token list - needed
+	   for borders/disabled states, kept close to Paper/Ink so they
+	   read as part of the same warm-neutral family rather than the
+	   old cool grays). */
+	--bizupkeep-border: #ECE7DD;
+	--bizupkeep-bg-light: #F6F2E9;
+
+	/* Section tints */
+	--bizupkeep-tint-peach: #FFF1EA;
+	--bizupkeep-tint-teal: #E6FBF6;
+	--bizupkeep-tint-violet: #F1EDFF;
+
+	/* Service accents - Bookkeeping */
+	--bizupkeep-coral: #FF5A5F;
+	--bizupkeep-coral-soft: #FFE0DD;
+
+	/* Service accents - Socials */
+	--bizupkeep-teal: #00BFA6;
+	--bizupkeep-teal-soft: #CFF6EE;
+
+	/* Service accents - Tech Support */
+	--bizupkeep-violet: #7B5EF5;
+	--bizupkeep-violet-soft: #E7E1FF;
+
+	/* Special use - Growth tier's "Save R350/month" badge only */
+	--bizupkeep-gold: #FFC93C;
+
+	/* Legacy aliases: kept so any markup/CSS this pass missed still
+	   resolves to a sensible brand color instead of the old navy/orange
+	   pair, rather than silently breaking. New rules should use the
+	   named tokens above directly, not these. */
+	--bizupkeep-primary: var(--bizupkeep-ink);
+	--bizupkeep-accent: var(--bizupkeep-ink);
+	--bizupkeep-text: var(--bizupkeep-ink);
+}
+
+body {
+	font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	background: var(--bizupkeep-paper);
+	color: var(--bizupkeep-ink);
+}
+
+h1, h2, h3, h4, h5, h6,
+.bizupkeep-site-title,
+.bizupkeep-hero-title,
+.bizupkeep-section-title,
+.bizupkeep-package-title,
+.bizupkeep-package-price {
+	font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
 }
 
 /* Header */
 .bizupkeep-header {
-	background: #ffffff;
-	border-bottom: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border-bottom: 1px solid var(--bizupkeep-border);
 	position: sticky;
 	top: 0;
 	z-index: 100;
@@ -30,7 +96,7 @@
 .bizupkeep-site-title {
 	font-size: 20px;
 	font-weight: 700;
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	text-decoration: none;
 }
 
@@ -50,13 +116,13 @@
 }
 
 .bizupkeep-menu a {
-	color: var(--bizupkeep-text);
+	color: var(--bizupkeep-ink);
 	text-decoration: none;
 	font-weight: 500;
 }
 
 .bizupkeep-menu a:hover {
-	color: var(--bizupkeep-accent);
+	color: var(--bizupkeep-coral);
 }
 
 /* Dropdown submenus, e.g. the "Client Portal" item's Dashboard/My
@@ -77,10 +143,10 @@
 	margin: 0;
 	padding: 6px;
 	list-style: none;
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 0 6px 6px 6px;
-	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+	box-shadow: 0 8px 20px rgba(27, 26, 46, 0.12);
 	z-index: 100;
 }
 
@@ -121,7 +187,7 @@
 	display: block;
 	width: 24px;
 	height: 2px;
-	background: var(--bizupkeep-primary);
+	background: var(--bizupkeep-ink);
 	margin: 5px 0;
 }
 
@@ -136,24 +202,24 @@
 }
 
 .bizupkeep-btn-primary {
-	background: var(--bizupkeep-accent);
-	color: #ffffff;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-paper);
 }
 
 .bizupkeep-btn-primary:hover {
-	background: #d9822f;
+	background: #2c2a47;
 	transform: translateY(-1px);
 }
 
 .bizupkeep-btn-secondary {
 	background: transparent;
-	color: var(--bizupkeep-primary);
-	border: 2px solid var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
+	border: 2px solid var(--bizupkeep-ink);
 }
 
 .bizupkeep-btn-secondary:hover {
-	background: var(--bizupkeep-primary);
-	color: #ffffff;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-paper);
 	transform: translateY(-1px);
 }
 
@@ -162,10 +228,43 @@
 	font-size: 18px;
 }
 
+/* Service-accent button variants - opt in wherever a card/section
+   belongs to one specific service, instead of the neutral Ink
+   default. */
+.bizupkeep-btn-coral {
+	background: var(--bizupkeep-coral);
+	color: var(--bizupkeep-paper);
+}
+
+.bizupkeep-btn-coral:hover {
+	background: #e34d52;
+	transform: translateY(-1px);
+}
+
+.bizupkeep-btn-teal {
+	background: var(--bizupkeep-teal);
+	color: var(--bizupkeep-paper);
+}
+
+.bizupkeep-btn-teal:hover {
+	background: #00a891;
+	transform: translateY(-1px);
+}
+
+.bizupkeep-btn-violet {
+	background: var(--bizupkeep-violet);
+	color: var(--bizupkeep-paper);
+}
+
+.bizupkeep-btn-violet:hover {
+	background: #6a4de0;
+	transform: translateY(-1px);
+}
+
 /* Hero */
 .bizupkeep-hero {
-	background: linear-gradient(135deg, var(--bizupkeep-primary), #274b6b);
-	color: #ffffff;
+	background: linear-gradient(135deg, var(--bizupkeep-ink), #2c2a47);
+	color: var(--bizupkeep-paper);
 	padding: 96px 24px;
 	text-align: center;
 }
@@ -198,7 +297,7 @@
 
 /* Services */
 .bizupkeep-services {
-	background: var(--bizupkeep-bg-light);
+	background: var(--bizupkeep-tint-teal);
 	padding: 72px 24px;
 }
 
@@ -211,17 +310,22 @@
 .bizupkeep-section-title {
 	font-size: 30px;
 	margin-bottom: 8px;
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 }
 
 .bizupkeep-section-subtext {
-	color: #6b7280;
+	color: var(--bizupkeep-muted);
 	margin-bottom: 32px;
 }
 
 /* How It Works / Why Us (shared step-card grid) */
-.bizupkeep-how-it-works,
+.bizupkeep-how-it-works {
+	background: var(--bizupkeep-tint-peach);
+	padding: 72px 24px;
+}
+
 .bizupkeep-why-us {
+	background: var(--bizupkeep-tint-violet);
 	padding: 72px 24px;
 }
 
@@ -241,14 +345,14 @@
 }
 
 .bizupkeep-step-card {
-	background: #ffffff;
+	background: var(--bizupkeep-paper);
 	border-radius: 8px;
 	padding: 28px;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+	box-shadow: 0 1px 3px rgba(27, 26, 46, 0.08);
 }
 
 .bizupkeep-step-card h3 {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	margin: 8px 0;
 }
 
@@ -259,20 +363,20 @@
 	width: 32px;
 	height: 32px;
 	border-radius: 50%;
-	background: var(--bizupkeep-accent);
-	color: #ffffff;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-paper);
 	font-weight: 700;
 }
 
 .bizupkeep-step-tagline {
 	font-weight: 600;
-	color: var(--bizupkeep-text);
+	color: var(--bizupkeep-ink);
 	margin: 0 0 8px;
 }
 
 /* FAQ */
 .bizupkeep-faq {
-	background: var(--bizupkeep-bg-light);
+	background: var(--bizupkeep-tint-peach);
 	padding: 72px 24px;
 }
 
@@ -282,8 +386,8 @@
 }
 
 .bizupkeep-faq-item {
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 8px;
 	padding: 16px 20px;
 	margin-bottom: 12px;
@@ -291,13 +395,13 @@
 
 .bizupkeep-faq-item summary {
 	font-weight: 600;
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	cursor: pointer;
 }
 
 .bizupkeep-faq-item p {
 	margin: 12px 0 0;
-	color: var(--bizupkeep-text);
+	color: var(--bizupkeep-ink);
 }
 
 /* CTA contact details */
@@ -312,7 +416,7 @@
 
 .bizupkeep-cta-contact a,
 .bizupkeep-cta-links a {
-	color: #ffffff;
+	color: var(--bizupkeep-paper);
 	text-decoration: underline;
 }
 
@@ -329,21 +433,21 @@
 }
 
 .bizupkeep-service-card {
-	background: #ffffff;
+	background: var(--bizupkeep-paper);
 	border-radius: 8px;
 	padding: 28px;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+	box-shadow: 0 1px 3px rgba(27, 26, 46, 0.08);
 }
 
 .bizupkeep-service-card h3 {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	margin-top: 0;
 }
 
 /* CTA */
 .bizupkeep-cta {
-	background: var(--bizupkeep-primary);
-	color: #ffffff;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-paper);
 	text-align: center;
 	padding: 64px 24px;
 }
@@ -354,8 +458,8 @@
 
 /* Footer */
 .bizupkeep-footer {
-	background: #14202e;
-	color: #cfd6dd;
+	background: var(--bizupkeep-ink);
+	color: rgba(255, 253, 248, 0.75);
 	padding: 56px 24px 24px;
 }
 
@@ -372,7 +476,7 @@
 }
 
 .bizupkeep-footer-heading {
-	color: #ffffff;
+	color: var(--bizupkeep-paper);
 	font-size: 16px;
 	margin-bottom: 12px;
 }
@@ -392,16 +496,16 @@
 }
 
 .bizupkeep-footer-menu a {
-	color: #cfd6dd;
+	color: rgba(255, 253, 248, 0.75);
 	text-decoration: none;
 }
 
 .bizupkeep-footer-menu a:hover {
-	color: var(--bizupkeep-accent);
+	color: var(--bizupkeep-coral);
 }
 
 .bizupkeep-footer-bottom {
-	border-top: 1px solid rgba(255, 255, 255, 0.1);
+	border-top: 1px solid rgba(255, 253, 248, 0.12);
 	padding-top: 20px;
 	font-size: 14px;
 	text-align: center;
@@ -418,27 +522,48 @@
 
 .bizupkeep-package-card {
 	position: relative;
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 10px;
 	padding: 32px 28px;
 	display: flex;
 	flex-direction: column;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+	box-shadow: 0 1px 3px rgba(27, 26, 46, 0.06);
 }
 
 .bizupkeep-package-card--featured {
-	border-color: var(--bizupkeep-accent);
-	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+	border-color: var(--bizupkeep-ink);
+	box-shadow: 0 4px 16px rgba(27, 26, 46, 0.12);
 	transform: scale(1.02);
+}
+
+/* Service-accent package cards - a top border plus a tinted wash so
+   the card visibly belongs to that service. Only Bookkeeping has a
+   real card to apply this to today (see template-homepage.php's
+   "Bookkeeping Services" package); .bizupkeep-package-card--socials
+   and --tech are defined for when those services get their own
+   Startup Stack sections. */
+.bizupkeep-package-card--bookkeeping {
+	border-top: 4px solid var(--bizupkeep-coral);
+	background: linear-gradient(180deg, var(--bizupkeep-coral-soft) 0%, var(--bizupkeep-paper) 140px);
+}
+
+.bizupkeep-package-card--socials {
+	border-top: 4px solid var(--bizupkeep-teal);
+	background: linear-gradient(180deg, var(--bizupkeep-teal-soft) 0%, var(--bizupkeep-paper) 140px);
+}
+
+.bizupkeep-package-card--tech {
+	border-top: 4px solid var(--bizupkeep-violet);
+	background: linear-gradient(180deg, var(--bizupkeep-violet-soft) 0%, var(--bizupkeep-paper) 140px);
 }
 
 .bizupkeep-package-badge {
 	position: absolute;
 	top: -12px;
 	left: 28px;
-	background: var(--bizupkeep-accent);
-	color: #ffffff;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-paper);
 	font-size: 12px;
 	font-weight: 700;
 	padding: 4px 12px;
@@ -447,8 +572,16 @@
 	letter-spacing: 0.03em;
 }
 
+/* Reserved for the Growth tier's "Save R350/month" badge only - kept
+   rare on purpose so it reads as "the deal", not a general-purpose
+   badge style. */
+.bizupkeep-package-badge--gold {
+	background: var(--bizupkeep-gold);
+	color: var(--bizupkeep-ink);
+}
+
 .bizupkeep-package-title {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	margin: 0 0 8px;
 	font-size: 22px;
 }
@@ -456,7 +589,7 @@
 .bizupkeep-package-price {
 	font-size: 28px;
 	font-weight: 700;
-	color: var(--bizupkeep-text);
+	color: var(--bizupkeep-ink);
 	margin-bottom: 20px;
 }
 
@@ -474,7 +607,7 @@
 .bizupkeep-package-features li {
 	padding: 8px 0 8px 26px;
 	position: relative;
-	border-bottom: 1px solid #f0f1f3;
+	border-bottom: 1px solid var(--bizupkeep-border);
 	font-size: 14px;
 }
 
@@ -482,8 +615,20 @@
 	content: "\2713";
 	position: absolute;
 	left: 0;
-	color: var(--bizupkeep-accent);
+	color: var(--bizupkeep-ink);
 	font-weight: 700;
+}
+
+.bizupkeep-package-card--bookkeeping .bizupkeep-package-features li::before {
+	color: var(--bizupkeep-coral);
+}
+
+.bizupkeep-package-card--socials .bizupkeep-package-features li::before {
+	color: var(--bizupkeep-teal);
+}
+
+.bizupkeep-package-card--tech .bizupkeep-package-features li::before {
+	color: var(--bizupkeep-violet);
 }
 
 .bizupkeep-package-cta {
@@ -499,7 +644,7 @@
 	font-size: 12px;
 	font-weight: 600;
 	background: var(--bizupkeep-bg-light);
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 }
 
 .bizupkeep-workflow-type-badge {
@@ -511,8 +656,8 @@
 	font-weight: 700;
 	text-transform: uppercase;
 	letter-spacing: 0.03em;
-	background: var(--bizupkeep-primary);
-	color: #ffffff;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-paper);
 }
 
 .bizupkeep-applications-table,
@@ -527,7 +672,7 @@
 .bizupkeep-documents-table th,
 .bizupkeep-documents-table td {
 	padding: 10px 12px;
-	border-bottom: 1px solid #e5e7eb;
+	border-bottom: 1px solid var(--bizupkeep-border);
 	text-align: left;
 }
 
@@ -555,8 +700,8 @@
 }
 
 .bizupkeep-upload-form input[disabled] {
-	background: #f3f4f6;
-	color: #6b7280;
+	background: var(--bizupkeep-bg-light);
+	color: var(--bizupkeep-muted);
 }
 
 /* Apply Page */
@@ -571,7 +716,7 @@
 }
 
 .bizupkeep-apply-inner h1 {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	font-size: 32px;
 	margin: 16px 0;
 }
@@ -594,7 +739,7 @@
 .bizupkeep-apply-form textarea {
 	width: 100%;
 	padding: 10px 12px;
-	border: 1px solid #d7dbe0;
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 6px;
 	font-size: 15px;
 	font-family: inherit;
@@ -613,7 +758,7 @@
 
 .bizupkeep-type-picker legend {
 	font-weight: 700;
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	margin-bottom: 10px;
 	padding: 0;
 }
@@ -632,26 +777,26 @@
 }
 
 .bizupkeep-field-hint {
-	color: #6b7280;
+	color: var(--bizupkeep-muted);
 	font-size: 13px;
 	margin: -4px 0 14px;
 }
 
 /* Apply form: per-type sections */
 .bizupkeep-apply-section {
-	border-top: 1px solid #e5e7eb;
+	border-top: 1px solid var(--bizupkeep-border);
 	padding-top: 20px;
 	margin-top: 20px;
 }
 
 .bizupkeep-apply-section h2 {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	font-size: 20px;
 	margin: 0 0 12px;
 }
 
 .bizupkeep-apply-section h3 {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	font-size: 16px;
 	margin: 20px 0 10px;
 }
@@ -665,8 +810,8 @@
 
 /* Apply form: director repeater */
 .bizupkeep-director-block {
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 8px;
 	padding: 18px 20px;
 	margin-bottom: 14px;
@@ -675,8 +820,8 @@
 
 /* Apply form: Annual Return financial year/turnover repeater */
 .bizupkeep-filing-block {
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 8px;
 	padding: 18px 20px;
 	margin-bottom: 14px;
@@ -710,15 +855,15 @@
 }
 
 .bizupkeep-company-documents {
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 10px;
 	padding: 24px 28px;
 	margin-bottom: 24px;
 }
 
 .bizupkeep-company-documents h2 {
-	color: var(--bizupkeep-primary);
+	color: var(--bizupkeep-ink);
 	margin: 0 0 8px;
 	font-size: 20px;
 }
@@ -748,8 +893,8 @@
 }
 
 .bizupkeep-applications-inner .bizupkeep-applications-table {
-	background: #ffffff;
-	border: 1px solid #e5e7eb;
+	background: var(--bizupkeep-paper);
+	border: 1px solid var(--bizupkeep-border);
 	border-radius: 10px;
 	overflow: hidden;
 }
