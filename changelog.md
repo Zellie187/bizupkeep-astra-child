@@ -1,5 +1,11 @@
 # BizUpKeep Astra Child - Changelog
 
+## 1.36.0
+- **My Bookkeeping's "Books" tab now embeds Stub** (https://developers.stub.africa) instead of BizUpKeep's own local ledger UI - replaces the Dashboard, Capture, Chart of Accounts, Statements, and Import tabs with Stub's embedded JS widgets (Cashflow, Income, Expenses, Profit, Bank Accounts, Bank Sync, Reports), rendered via `bizupkeep_child_render_stub_books_tab()`. No separate Stub login: a server-issued token (from the new `bizupkeep-stub` plugin) authenticates the widgets directly off the client's existing WordPress session, refreshed roughly every 50 minutes via `bizupkeep-stub`'s own authenticated REST route (tokens last an hour).
+- **Recurring, Customers, Invoices, and Export tabs are unchanged** - Stub has no equivalent for recurring templates or invoicing, so those keep running on BizUpKeep Bookkeeping's own services exactly as before.
+- The old Dashboard/Capture/Chart of Accounts/Statements/Import tab-render functions in `functions.php` are no longer called from this template but were deliberately left in place (not deleted) as a rollback path until the Stub integration has proven itself in production.
+- Not verified end-to-end - no PHP/WordPress runtime or live Stub credentials were available while writing this change; see the plan's verification checklist.
+
 ## 1.35.0
 - **CIPC checkout reworked into a real multi-item WooCommerce cart.** Previously "Pay Now" cleared the cart, added exactly one product, and sent the client straight to checkout - one order could only ever settle one application's payment. Now:
   - Company Registration/Amendment applications are added to the cart automatically at submission time (not just via a later "Pay Now" click), and Annual Return's "Pay Now" (once staff have sent a quote) does the same - all three now add to the cart rather than clearing it, and land the client on the cart page instead of checkout, so another application can be added before paying.

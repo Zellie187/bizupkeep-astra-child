@@ -35,6 +35,8 @@ use BizHub\Bookkeeping\Export\QuickBooksOnlineExporter;
 use BizHub\Bookkeeping\Export\SageExporter;
 use BizHub\Bookkeeping\Export\XeroExporter;
 use BizHub\Bookkeeping\Policies\Capabilities as BookkeepingCapabilities;
+use BizHub\Stub\Contracts\StubAuthTokenServiceInterface;
+use BizHub\Stub\Contracts\StubBusinessProvisionerInterface;
 use BizHub\ClientPortal\Contracts\ClientServiceInterface;
 use BizHub\ClientPortal\DTO\ClientData;
 use BizHub\ClientPortal\DTO\ProfileData;
@@ -63,7 +65,7 @@ use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 use BizUpKeep\Core\Contracts\ServiceRepositoryInterface;
 use BizUpKeep\Core\Enums\ServiceVatTreatment;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.29.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.36.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -4942,10 +4944,105 @@ function bizupkeep_child_handle_bookkeeping_export_request(): void {
 }
 
 /**
+ * Render the client-facing embedded Stub widgets - the "Books" tab
+ * that replaced the old Dashboard/Capture/Chart of Accounts/
+ * Statements/Import tabs (see changelog.md for this version). Stub's
+ * SDK (https://developers.stub.africa/sdk-documentation/embedded-accounting)
+ * renders Cashflow/Income/Expenses/Profit/Bank Accounts/Bank Sync/
+ * Reports widgets directly into this page once initialised with a
+ * server-issued token - the client never sees or logs into stub.africa
+ * itself, they're just using BizUpKeep as normal.
+ *
+ * The FIRST token is issued right here, server-side, matching this
+ * codebase's "container service call, no REST hop" convention (see
+ * bizupkeep-payments' routes/api.php docblock) - only the ~hourly
+ * refresh (Stub tokens last 60 minutes) needs a live endpoint, handled
+ * by BizUpKeep Stub's own authenticated /wp-json/bizupkeep-stub/v1/token
+ * route (BizHub\Stub\Http\Controllers\StubTokenRefreshController).
+ *
+ * The old tab-render functions below this one
+ * (bizupkeep_child_render_bookkeeping_dashboard_tab() through
+ * _import_tab()) are no longer called from anywhere in this template -
+ * left in place deliberately rather than deleted, as an unverified-in-
+ * production rollback path until the Stub integration has proven
+ * itself; a later cleanup pass can remove them once it has.
+ */
+function bizupkeep_child_render_stub_books_tab( Company $company ): void {
+	if ( ! defined( 'BIZUPKEEP_STUB_VERSION' ) || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		echo '<p>' . esc_html__( 'Bookkeeping is not available right now - please try again shortly or contact us.', 'bizupkeep-astra-child' ) . '</p>';
+
+		return;
+	}
+
+	try {
+		$container    = bizhub()->container();
+		$client       = $container->get( ClientServiceInterface::class )->getClientByWpUserId( get_current_user_id() );
+		$business_uid = $container->get( StubBusinessProvisionerInterface::class )->findOrCreate( $client, $company );
+		$token        = $container->get( StubAuthTokenServiceInterface::class )->getToken( $business_uid );
+	} catch ( \Throwable $e ) {
+		echo '<p>' . esc_html__( 'Could not load your books right now - please try again shortly or contact us.', 'bizupkeep-astra-child' ) . '</p>';
+
+		return;
+	}
+
+	$app_id      = get_option( 'bizupkeep_stub_app_id' );
+	$app_id      = is_string( $app_id ) ? $app_id : '';
+	$environment = get_option( 'bizupkeep_stub_environment', 'test' );
+	?>
+	<link href="https://cdn.stub.africa/stub-widgets/latest/stub-widgets.css" rel="stylesheet" />
+	<div id="stub-cashflow"></div>
+	<div id="stub-profit"></div>
+	<div id="stub-income"></div>
+	<div id="stub-expenses"></div>
+	<div id="stub-bank-accounts"></div>
+	<div id="stub-bank-sync"></div>
+	<div id="stub-reports"></div>
+	<div id="stub-powered-by"></div>
+
+	<script src="https://cdn.stub.africa/stub-widgets/latest/stub-widgets.js"></script>
+	<script>
+	( function () {
+		var options = {
+			appId: <?php echo wp_json_encode( $app_id ); ?>,
+			businessId: <?php echo wp_json_encode( $business_uid ); ?>,
+			token: <?php echo wp_json_encode( $token ); ?>,
+			renderImmediately: true,
+			test: <?php echo wp_json_encode( 'live' !== $environment ); ?>
+		};
+
+		window.stub.init( options );
+
+		// Tokens last an hour - refresh a few minutes early so a long
+		// portal session never authenticates with an expired one.
+		setInterval( function () {
+			fetch( <?php echo wp_json_encode( rest_url( 'bizupkeep-stub/v1/token' ) ); ?>, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'X-WP-Nonce': <?php echo wp_json_encode( wp_create_nonce( 'wp_rest' ) ); ?>
+				},
+				body: JSON.stringify( { company_uuid: <?php echo wp_json_encode( $company->getUuid() ); ?> } )
+			} )
+				.then( function ( response ) { return response.json(); } )
+				.then( function ( data ) {
+					if ( data && data.token ) {
+						window.stub.set( { token: data.token } );
+					}
+				} );
+		}, 50 * 60 * 1000 );
+	} )();
+	</script>
+	<?php
+}
+
+/**
  * Render the "Dashboard" tab: current-month income/expense totals plus
  * a short recent-activity list. Bails out to a generic message on any
  * BookkeepingException (e.g. LedgerIntegrityException) rather than
  * fataling the whole portal page.
+ *
+ * No longer called from template-bookkeeping.php - see
+ * bizupkeep_child_render_stub_books_tab()'s docblock.
  */
 function bizupkeep_child_render_bookkeeping_dashboard_tab( Company $company ): void {
 	if ( ! function_exists( 'bizhub' ) || null === bizhub() ) {

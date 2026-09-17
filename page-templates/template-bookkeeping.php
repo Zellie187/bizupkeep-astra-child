@@ -1,21 +1,22 @@
 <?php
 /**
  * Template Name: BizUpKeep My Bookkeeping
- * Description:   Client Portal bookkeeping page - lets a logged-in
- *                 client capture income/expenses against their
- *                 company's chart of accounts, view financial
- *                 statements (Trial Balance / Income Statement /
- *                 Balance Sheet), and export their ledger for Sage,
- *                 Xero or QuickBooks. Backed by the BizUpKeep
- *                 Bookkeeping plugin's services via bizhub()->container(),
- *                 same integration pattern as every other portal page.
- *                 Form submission and CSV export are both handled on
- *                 template_redirect (see functions.php's
- *                 bizupkeep_child_handle_capture_transaction_submission()
- *                 and bizupkeep_child_handle_bookkeeping_export_request())
- *                 so they can redirect/stream before this template ever
- *                 renders. This page is only reachable while logged in -
- *                 see bizupkeep_child_guard_client_portal().
+ * Description:   Client Portal bookkeeping page. The "Books" tab
+ *                 embeds Stub's accounting widgets (Cashflow, Income,
+ *                 Expenses, Profit, Bank Accounts, Bank Sync, Reports -
+ *                 see bizupkeep_child_render_stub_books_tab()), which
+ *                 replaced the old Dashboard/Capture/Chart of
+ *                 Accounts/Statements/Import tabs. Recurring,
+ *                 Customers, Invoices, and Export stay on BizUpKeep
+ *                 Bookkeeping's own services via bizhub()->container()
+ *                 (no Stub equivalent exists for invoicing or
+ *                 recurring templates), same integration pattern as
+ *                 every other portal page. Form submission is handled
+ *                 on template_redirect (see functions.php's various
+ *                 bizupkeep_child_handle_*_submission() functions) so
+ *                 it can redirect before this template ever renders.
+ *                 This page is only reachable while logged in - see
+ *                 bizupkeep_child_guard_client_portal().
  *
  * @package BizUpKeep_Astra_Child
  */
@@ -37,10 +38,10 @@ if ( '' === $company_uuid && 1 === count( $companies ) ) {
 
 $company = '' !== $company_uuid ? bizupkeep_child_get_owned_company( $wp_user_id, $company_uuid ) : null;
 
-$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'dashboard';
+$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'books';
 
-if ( ! in_array( $tab, array( 'dashboard', 'capture', 'accounts', 'statements', 'export', 'import', 'recurring', 'customers', 'invoices' ), true ) ) {
-	$tab = 'dashboard';
+if ( ! in_array( $tab, array( 'books', 'export', 'recurring', 'customers', 'invoices' ), true ) ) {
+	$tab = 'books';
 }
 
 if ( null !== $company ) {
@@ -82,15 +83,11 @@ if ( null !== $company ) {
 				<nav class="bizupkeep-bookkeeping-tabs">
 					<?php
 					$tabs = array(
-						'dashboard'  => __( 'Dashboard', 'bizupkeep-astra-child' ),
-						'capture'    => __( 'Capture', 'bizupkeep-astra-child' ),
-						'recurring'  => __( 'Recurring', 'bizupkeep-astra-child' ),
-						'customers'  => __( 'Customers', 'bizupkeep-astra-child' ),
-						'invoices'   => __( 'Invoices', 'bizupkeep-astra-child' ),
-						'import'     => __( 'Import', 'bizupkeep-astra-child' ),
-						'accounts'   => __( 'Chart of Accounts', 'bizupkeep-astra-child' ),
-						'statements' => __( 'Statements', 'bizupkeep-astra-child' ),
-						'export'     => __( 'Export', 'bizupkeep-astra-child' ),
+						'books'     => __( 'Books', 'bizupkeep-astra-child' ),
+						'recurring' => __( 'Recurring', 'bizupkeep-astra-child' ),
+						'customers' => __( 'Customers', 'bizupkeep-astra-child' ),
+						'invoices'  => __( 'Invoices', 'bizupkeep-astra-child' ),
+						'export'    => __( 'Export', 'bizupkeep-astra-child' ),
 					);
 					foreach ( $tabs as $tab_key => $tab_label ) :
 						$url = add_query_arg( array( 'tab' => $tab_key, 'company' => $company->getUuid() ), get_permalink() );
@@ -141,22 +138,14 @@ if ( null !== $company ) {
 					<p class="bizupkeep-status-pill"><?php esc_html_e( 'Could not complete that invoice action - please try again.', 'bizupkeep-astra-child' ); ?></p>
 				<?php endif; ?>
 
-				<?php if ( 'dashboard' === $tab ) : ?>
-					<?php bizupkeep_child_render_bookkeeping_dashboard_tab( $company ); ?>
-				<?php elseif ( 'capture' === $tab ) : ?>
-					<?php bizupkeep_child_render_bookkeeping_capture_tab( $company ); ?>
+				<?php if ( 'books' === $tab ) : ?>
+					<?php bizupkeep_child_render_stub_books_tab( $company ); ?>
 				<?php elseif ( 'recurring' === $tab ) : ?>
 					<?php bizupkeep_child_render_bookkeeping_recurring_tab( $company ); ?>
 				<?php elseif ( 'customers' === $tab ) : ?>
 					<?php bizupkeep_child_render_bookkeeping_customers_tab( $company ); ?>
 				<?php elseif ( 'invoices' === $tab ) : ?>
 					<?php bizupkeep_child_render_bookkeeping_invoices_tab( $company ); ?>
-				<?php elseif ( 'import' === $tab ) : ?>
-					<?php bizupkeep_child_render_bookkeeping_import_tab( $company ); ?>
-				<?php elseif ( 'accounts' === $tab ) : ?>
-					<?php bizupkeep_child_render_bookkeeping_accounts_tab( $company ); ?>
-				<?php elseif ( 'statements' === $tab ) : ?>
-					<?php bizupkeep_child_render_bookkeeping_statements_tab( $company ); ?>
 				<?php elseif ( 'export' === $tab ) : ?>
 					<?php bizupkeep_child_render_bookkeeping_export_tab( $company ); ?>
 				<?php endif; ?>
