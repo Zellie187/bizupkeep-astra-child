@@ -26,7 +26,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 				<?php the_custom_logo(); ?>
 			<?php else : ?>
 				<a href="<?php echo esc_url( home_url( '/' ) ); ?>" class="bizupkeep-site-title">
-					<?php bloginfo( 'name' ); ?>
+					<img src="<?php echo esc_url( get_stylesheet_directory_uri() . '/assets/images/logo-light.svg' ); ?>" alt="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>" class="bizupkeep-logo">
 				</a>
 			<?php endif; ?>
 		</div>

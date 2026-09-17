@@ -7,17 +7,19 @@ namespace BizUpKeep\Tests\E2E;
 use BizUpKeep\Tests\E2E\Support\E2ETestCase;
 
 /**
- * Covers the Company Amendment "Pay Now" flow end to end over real
+ * Covers the Company Amendment "Add to Cart" flow end to end over real
  * HTTP: submit an amendment (which now lands straight at
- * AwaitingPayment - see bizupkeep_child_advance_to_awaiting_payment()),
- * upload all four required documents anyway to prove that still works
- * even though it's no longer what unlocks payment
- * (BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES), then follow the payment link
- * and confirm it lands on a real WooCommerce checkout with the ONE
- * product matching this amendment's exact amendment_types - the fix
- * for the pricing gap the user asked about directly (a client
- * bundling several change types could otherwise pick any product,
- * with no connection to what was actually requested).
+ * AwaitingPayment AND is added to the cart automatically - see
+ * bizupkeep_child_advance_to_awaiting_payment()/
+ * bizupkeep_child_submit_company_amendment()), upload all four required
+ * documents anyway to prove that still works even though it's no
+ * longer what unlocks payment (BIZUPKEEP_DOCUMENT_UPLOAD_STATUSES),
+ * then follow the payment link and confirm it lands in a real
+ * WooCommerce cart with the ONE product matching this amendment's
+ * exact amendment_types - the fix for the pricing gap the user asked
+ * about directly (a client bundling several change types could
+ * otherwise pick any product, with no connection to what was actually
+ * requested).
  */
 final class PaymentFlowTest extends E2ETestCase
 {
@@ -55,19 +57,24 @@ final class PaymentFlowTest extends E2ETestCase
 
     public function test_paying_for_an_address_only_amendment_routes_to_the_matching_product(): void
     {
+        // Submission itself already adds the address-change product to
+        // the cart (bizupkeep_child_submit_company_amendment()) -
+        // re-visiting the "Add to Cart" link should be a no-op that
+        // still lands on the cart page with that same product, not a
+        // duplicate line item (bizupkeep_child_cart_has_workflow()).
         $workflowUuid = $this->startAnAddressOnlyAmendmentAwaitingPayment();
 
         $response = $this->http->get('/?bizupkeep_pay_amendment=' . $workflowUuid);
 
         self::assertStringContainsString(
-            '/checkout/',
+            '/cart/',
             $response->finalUrl,
-            'Expected the payment link to land on checkout; got: ' . $response->finalUrl
+            'Expected the payment link to land on the cart page; got: ' . $response->finalUrl
         );
         self::assertStringContainsString(
             'Address Change',
             $response->body,
-            'Checkout does not show the product matching this amendment\'s exact change type.'
+            'Cart does not show the product matching this amendment\'s exact change type.'
         );
 
         $product = $this->db->fetchOne(

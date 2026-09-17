@@ -34,6 +34,7 @@ use BizHub\Bookkeeping\Export\CsvReader as BookkeepingCsvReader;
 use BizHub\Bookkeeping\Export\QuickBooksOnlineExporter;
 use BizHub\Bookkeeping\Export\SageExporter;
 use BizHub\Bookkeeping\Export\XeroExporter;
+use BizHub\Bookkeeping\Policies\Capabilities as BookkeepingCapabilities;
 use BizHub\ClientPortal\Contracts\ClientServiceInterface;
 use BizHub\ClientPortal\DTO\ClientData;
 use BizHub\ClientPortal\DTO\ProfileData;
@@ -48,6 +49,7 @@ use BizHub\Companies\Entities\Company;
 use BizHub\Companies\Entities\CompanyStatus;
 use BizHub\Documents\Entities\DocumentCategory;
 use BizHub\Documents\Services\DocumentService;
+use BizHub\Security\Authorization\Contracts\AuthorizationServiceInterface;
 use BizHub\Workflow\Contracts\WorkflowRepositoryInterface;
 use BizHub\Workflow\Contracts\WorkflowTypeServiceInterface;
 use BizHub\Workflow\Entities\WorkflowInstance;
@@ -108,6 +110,7 @@ add_action( 'wp_enqueue_scripts', 'bizupkeep_child_enqueue_assets' );
 function bizupkeep_child_register_page_templates( array $templates ): array {
 	$templates['page-templates/template-homepage.php']    = __( 'BizUpKeep Homepage', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-apply.php']       = __( 'BizUpKeep Apply', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-contact.php']     = __( 'BizUpKeep Contact Us', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-documents.php']   = __( 'BizUpKeep My Documents', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-applications.php'] = __( 'BizUpKeep My Applications', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-profile.php']     = __( 'BizUpKeep My Profile', 'bizupkeep-astra-child' );
@@ -131,6 +134,20 @@ function bizupkeep_child_setup(): void {
 	);
 }
 add_action( 'after_setup_theme', 'bizupkeep_child_setup' );
+
+/**
+ * "Cart" and "Checkout" used to be stripped from the primary menu here
+ * (bizupkeep_child_strip_cart_checkout_menu_items(), removed) back when
+ * every purchase was a single quoted item added to a freshly-cleared
+ * cart and sent straight to checkout via a "Pay Now" link - a
+ * general-purpose cart entry point was genuinely confusing under that
+ * design. Now that applications are added to a persistent cart at
+ * submission/Pay-Now time (see bizupkeep_child_add_workflow_to_cart())
+ * so a client can accumulate more than one service before paying, the
+ * cart is a real, useful destination again - these nav_menu_item
+ * entries (plain manually-added ones, not something this theme's code
+ * ever added) are left alone.
+ */
 
 /**
  * Register footer widget area.
@@ -797,6 +814,113 @@ function bizupkeep_child_setup_apply_page(): void {
 	update_post_meta( $apply_id, '_wp_page_template', 'page-templates/template-apply.php' );
 }
 
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_contact_page' );
+add_action( 'init', 'bizupkeep_child_maybe_add_contact_page' );
+
+/**
+ * One-time creation for sites that activated the theme before the
+ * Contact Us page existed - bizupkeep_child_setup_contact_page() only
+ * runs on after_switch_theme, which doesn't fire again just from
+ * deploying updated theme files, so this creates the missing page once
+ * via a stored option flag, mirroring
+ * bizupkeep_child_maybe_add_bookkeeping_page()'s approach for the same
+ * underlying problem.
+ */
+function bizupkeep_child_maybe_add_contact_page(): void {
+	if ( get_option( 'bizupkeep_child_contact_page_added' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_contact_page();
+
+	update_option( 'bizupkeep_child_contact_page_added', '1' );
+}
+
+/**
+ * Idempotently create the "Contact Us" page and assign it the contact
+ * template. Safe to run on every theme activation.
+ */
+function bizupkeep_child_setup_contact_page(): void {
+	$contact_id = bizupkeep_child_get_or_create_page( 'contact-us', __( 'Contact Us', 'bizupkeep-astra-child' ), '', 0 );
+
+	if ( 0 === $contact_id ) {
+		return;
+	}
+
+	update_post_meta( $contact_id, '_wp_page_template', 'page-templates/template-contact.php' );
+}
+
+add_action( 'template_redirect', 'bizupkeep_child_handle_contact_submission' );
+
+/**
+ * Handle the Contact Us form's POST submission. Runs on
+ * template_redirect (before the page template renders), matching
+ * bizupkeep_child_handle_apply_submission()'s pattern. Unlike the Apply
+ * form, this never touches the workflow engine or requires an account -
+ * it's just a lead capture that emails staff so someone can phone the
+ * client back, so no guest-registration step is needed here either.
+ */
+function bizupkeep_child_handle_contact_submission(): void {
+	if ( ! isset( $_POST['bizupkeep_contact_nonce'] ) ) {
+		return;
+	}
+
+	if ( ! is_page() || bizupkeep_child_find_page( 'contact-us', 0 ) !== get_queried_object_id() ) {
+		return;
+	}
+
+	check_admin_referer( 'bizupkeep_contact', 'bizupkeep_contact_nonce' );
+
+	$name    = isset( $_POST['contact_name'] ) ? sanitize_text_field( wp_unslash( $_POST['contact_name'] ) ) : '';
+	$phone   = isset( $_POST['contact_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['contact_phone'] ) ) : '';
+	$email   = isset( $_POST['contact_email'] ) ? sanitize_email( wp_unslash( $_POST['contact_email'] ) ) : '';
+	$message = isset( $_POST['contact_message'] ) ? sanitize_textarea_field( wp_unslash( $_POST['contact_message'] ) ) : '';
+
+	if ( '' === $name || '' === $phone || '' === $email || ! is_email( $email ) ) {
+		wp_safe_redirect( add_query_arg( 'contact_error', '1', get_permalink() ) );
+		exit;
+	}
+
+	$sent = bizupkeep_child_send_contact_enquiry_email( $name, $phone, $email, $message );
+
+	if ( ! $sent ) {
+		wp_safe_redirect( add_query_arg( 'contact_error', '1', get_permalink() ) );
+		exit;
+	}
+
+	wp_safe_redirect( add_query_arg( 'submitted', '1', get_permalink() ) );
+	exit;
+}
+
+/**
+ * Email a new Contact Us enquiry to the site admin so staff can phone
+ * the client back. A plain wp_mail() call, same reasoning as
+ * bizupkeep_child_send_submission_payment_email() - this is a theme-
+ * level lead notification, not a workflow-engine event.
+ */
+function bizupkeep_child_send_contact_enquiry_email( string $name, string $phone, string $email, string $message ): bool {
+	$to      = get_option( 'admin_email' );
+	$subject = sprintf(
+		/* translators: %s: enquiring client's name */
+		__( 'New call back request - %s', 'bizupkeep-astra-child' ),
+		$name
+	);
+
+	$body = sprintf(
+		/* translators: 1: name, 2: phone, 3: email, 4: message */
+		__(
+			"A new call back request came in via the website.\n\nName: %1\$s\nPhone: %2\$s\nEmail: %3\$s\n\nMessage:\n%4\$s\n",
+			'bizupkeep-astra-child'
+		),
+		$name,
+		$phone,
+		$email,
+		'' !== $message ? $message : __( '(none provided)', 'bizupkeep-astra-child' )
+	);
+
+	return wp_mail( $to, $subject, $body, array( 'Reply-To: ' . $name . ' <' . $email . '>' ) );
+}
+
 add_action( 'template_redirect', 'bizupkeep_child_handle_apply_submission' );
 
 /**
@@ -858,7 +982,20 @@ function bizupkeep_child_handle_apply_submission(): void {
 		exit;
 	}
 
-	wp_safe_redirect( add_query_arg( 'submitted', '1', get_permalink() ) );
+	// $application_type rides along so the confirmation screen can tell
+	// a client whose application was just added to their cart
+	// (Registration/Amendment - see bizupkeep_child_submit_new_registration()/
+	// bizupkeep_child_submit_company_amendment()) from one that wasn't
+	// yet (Annual Return, which stays Created until staff send a quote).
+	wp_safe_redirect(
+		add_query_arg(
+			array(
+				'submitted' => '1',
+				'app_type'  => $application_type,
+			),
+			get_permalink()
+		)
+	);
 	exit;
 }
 
@@ -918,16 +1055,19 @@ function bizupkeep_child_advance_to_awaiting_payment( WorkflowTypeServiceInterfa
 }
 
 /**
- * Email a client a direct payment link plus a documents reminder
+ * Email a client a direct cart link plus a documents reminder
  * immediately after submitting a Company Registration or Company
- * Amendment application - the same "Pay Now" URL My Applications
- * shows, sent straight to their inbox so they don't have to log in
- * just to find it. A plain wp_mail() call rather than routed through
- * bizupkeep-workflow's own WorkflowNotificationListener/
- * config/notifications.php: that system has no concept of a
- * WooCommerce URL (a theme-level detail) and already fires its own
- * generic per-action notification alongside this one for the in-app
- * feed - this is the richer, actually-clickable counterpart.
+ * Amendment application - the same "Add to Cart" URL My Applications
+ * shows (by the time this email is sent, the application's product is
+ * already in their cart - see bizupkeep_child_submit_new_registration()/
+ * bizupkeep_child_submit_company_amendment()), sent straight to their
+ * inbox so they don't have to log in just to find it. A plain
+ * wp_mail() call rather than routed through bizupkeep-workflow's own
+ * WorkflowNotificationListener/config/notifications.php: that system
+ * has no concept of a WooCommerce URL (a theme-level detail) and
+ * already fires its own generic per-action notification alongside
+ * this one for the in-app feed - this is the richer, actually-
+ * clickable counterpart.
  */
 function bizupkeep_child_send_submission_payment_email( int $wp_user_id, string $workflow_type_label, string $company_identifier, string $pay_url ): void {
 	$wp_user = get_userdata( $wp_user_id );
@@ -943,9 +1083,9 @@ function bizupkeep_child_send_submission_payment_email( int $wp_user_id, string 
 	);
 
 	$body = sprintf(
-		/* translators: 1: client's first name, 2: workflow type label, 3: company identifier, 4: Pay Now URL, 5: My Applications URL */
+		/* translators: 1: client's first name, 2: workflow type label, 3: company identifier, 4: cart URL, 5: My Applications URL */
 		__(
-			"Hi %1\$s,\n\nThanks for submitting your %2\$s application for %3\$s.\n\nYou can pay for it right away here:\n%4\$s\n\nYou can also log in and upload your supporting documents (ID document, and any signed forms we generate for you) any time before or after paying, from your Client Portal:\n%5\$s\n\nWe'll be in touch once everything is in.\n",
+			"Hi %1\$s,\n\nThanks for submitting your %2\$s application for %3\$s. We've added it to your cart.\n\nYou can check out and pay right away, or add another service first, here:\n%4\$s\n\nYou can also log in and upload your supporting documents (ID document, and any signed forms we generate for you) any time before or after paying, from your Client Portal:\n%5\$s\n\nWe'll be in touch once everything is in.\n",
 			'bizupkeep-astra-child'
 		),
 		'' !== $wp_user->first_name ? $wp_user->first_name : $wp_user->display_name,
@@ -1074,6 +1214,20 @@ function bizupkeep_child_submit_new_registration( int $wp_user_id, string $notes
 		// bizupkeep_child_advance_to_awaiting_payment()'s docblock.
 		bizupkeep_child_advance_to_awaiting_payment( $registration, $instance->getUuid(), $wp_user_id );
 
+		// Add straight to the client's cart at submission (rather than
+		// only via a later "Pay Now" click) so they can accumulate
+		// other services' applications before checking out - see the
+		// "Payment ... via a real WooCommerce cart" docblock. Best-effort:
+		// bizupkeep_child_add_workflow_to_cart() already no-ops if
+		// WooCommerce's cart isn't available in this request context,
+		// and the email below still carries a working Add-to-Cart link
+		// either way.
+		$registration_product_id = bizupkeep_child_get_product_id_by_slug( BIZUPKEEP_REGISTRATION_PRODUCT_SLUG );
+
+		if ( 0 !== $registration_product_id ) {
+			bizupkeep_child_add_workflow_to_cart( $instance->getUuid(), $registration_product_id );
+		}
+
 		bizupkeep_child_send_submission_payment_email(
 			$wp_user_id,
 			__( 'Company Registration', 'bizupkeep-astra-child' ),
@@ -1172,6 +1326,14 @@ function bizupkeep_child_submit_company_amendment( int $wp_user_id, string $note
 		// and submit supporting documents separately, any time. See
 		// bizupkeep_child_advance_to_awaiting_payment()'s docblock.
 		bizupkeep_child_advance_to_awaiting_payment( $amendments, $instance->getUuid(), $wp_user_id, $notes );
+
+		// Add straight to the client's cart at submission - see the
+		// matching comment in bizupkeep_child_submit_new_registration().
+		$amendment_product_id = bizupkeep_child_resolve_amendment_product_id( $amendment_types );
+
+		if ( 0 !== $amendment_product_id ) {
+			bizupkeep_child_add_workflow_to_cart( $instance->getUuid(), $amendment_product_id );
+		}
 
 		bizupkeep_child_send_submission_payment_email(
 			$wp_user_id,
@@ -3104,7 +3266,7 @@ function bizupkeep_child_workflow_status_label( WorkflowStatus $status, string $
 
 /**
  * Payment (the AwaitingPayment step, shared by all three workflow
- * types), via WooCommerce.
+ * types), via a real WooCommerce cart.
  *
  * BizHub already has a WooCommerce integration
  * (includes/Integrations/WooCommerce/: ApplicationCreator,
@@ -3117,50 +3279,87 @@ function bizupkeep_child_workflow_status_label( WorkflowStatus $status, string $
  * ApplicationCreator/OrderListener/ProductMapper, and doesn't create
  * any bizhub_applications rows itself.
  *
- * The core problem this solves: nothing ties a WooCommerce order to a
- * *specific* in-progress application. The flow:
- *   1. "Pay Now" on My Applications routes straight to the ONE product
- *      matching that application (bizupkeep_child_registration_payment_url()/
+ * The core problem this solves: nothing ties a WooCommerce order LINE
+ * ITEM to a *specific* in-progress application, and a client can now
+ * have more than one application's product in the same cart at once.
+ * The flow:
+ *   1. bizupkeep_child_add_workflow_to_cart() (called both right at
+ *      submission for Company Registration/Amendment, and from the
+ *      "Add to Cart" link on My Applications for all three types)
+ *      resolves the ONE product matching that application
+ *      (bizupkeep_child_registration_payment_url()/
  *      bizupkeep_child_amendment_payment_url()/
  *      bizupkeep_child_annual_return_payment_url() - a fixed real
  *      product for Registration, one of 7 real products for Amendment
  *      depending on its exact amendment_types, a dynamically-priced
- *      product for Annual Return since that's quoted, not fixed),
- *      clearing the cart and adding that one product before sending
- *      the client straight to checkout - never an open category browse
- *      a client could pick anything from, unrelated to what they
- *      actually applied for.
- *   2. Each of those three handlers stores the application's UUID (its
- *      own, not the company's, since a company can have more than one
- *      application in flight) in the WooCommerce session before
- *      redirecting to checkout - not order meta yet, since no order
- *      exists.
- *   3. bizupkeep_child_attach_workflow_to_order() copies the session
- *      value onto the new order as post meta at checkout, re-verifying
- *      ownership again (a session value could otherwise be replayed
- *      across tabs/accounts).
- *   4. When that order's status changes to processing/completed,
- *      bizupkeep_child_handle_order_payment() reads the application
- *      UUID back off the order and confirms payment on it (dispatched
- *      to whichever workflow type it actually is via
+ *      product for Annual Return since that's quoted, not fixed), and
+ *      adds it to the cart WITHOUT clearing what's already there,
+ *      carrying the application's own UUID (its own, not the
+ *      company's, since a company can have more than one application
+ *      in flight) as WooCommerce cart-item data - not order meta yet,
+ *      since no order exists, and not WC session either, since more
+ *      than one application can now be in the cart at once.
+ *   2. bizupkeep_child_attach_workflow_to_order_item() copies that
+ *      cart-item data onto the corresponding new order LINE ITEM's
+ *      meta at checkout, re-verifying ownership again (cart-item data
+ *      could otherwise be replayed across tabs/accounts).
+ *   3. When that order's status changes to processing/completed,
+ *      bizupkeep_child_handle_order_payment() loops every line item,
+ *      reads the application UUID back off each one that has one, and
+ *      confirms payment on it independently (dispatched to whichever
+ *      workflow type it actually is via
  *      bizupkeep_child_workflow_type_service()), using the order ID as
- *      the guard's required context['payment_reference'].
+ *      the guard's required context['payment_reference'] - so one
+ *      order can settle several applications' payments at once.
  */
-
-const BIZUPKEEP_PAYMENT_SESSION_KEY = 'bizupkeep_workflow_uuid';
 
 /**
- * An Annual Return's price isn't a fixed WooCommerce product - it's
- * whatever staff quoted after checking CIPC (see AnnualReturnGuard::
- * guardRequestPayment()), which can differ per company/filing. This
- * session key carries that specific amount from
- * bizupkeep_child_handle_annual_return_payment_intent() through to
- * bizupkeep_child_apply_annual_return_quote_price(), the same way
- * BIZUPKEEP_PAYMENT_SESSION_KEY already carries the workflow UUID -
- * cleared in bizupkeep_child_attach_workflow_to_order() once the order
- * exists and no longer needs it.
+ * Has this application already been added to the current cart? Used
+ * so re-clicking "Add to Cart"/"Pay Now" for the same application is a
+ * no-op (just send the client to the cart) instead of adding a
+ * duplicate line item.
  */
-const BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY = 'bizupkeep_annual_return_quote_amount';
+function bizupkeep_child_cart_has_workflow( string $workflow_uuid ): bool {
+	if ( null === WC()->cart ) {
+		return false;
+	}
+
+	foreach ( WC()->cart->get_cart() as $cart_item ) {
+		if ( ( $cart_item['bizupkeep_workflow_uuid'] ?? null ) === $workflow_uuid ) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Add one application's product to the cart, carrying its workflow
+ * UUID (and, for Annual Return, its quoted amount) as WooCommerce
+ * cart-item data rather than a single global WC session value - the
+ * mechanism that lets more than one application's product sit in the
+ * same cart at once (see the docblock above). Never clears the cart
+ * first - the caller decides where to send the client afterward.
+ * Returns false if the product couldn't be resolved; true if it was
+ * added, or was already in the cart.
+ */
+function bizupkeep_child_add_workflow_to_cart( string $workflow_uuid, int $product_id, ?float $quote_amount = null ): bool {
+	if ( 0 === $product_id || null === WC()->cart ) {
+		return false;
+	}
+
+	if ( bizupkeep_child_cart_has_workflow( $workflow_uuid ) ) {
+		return true;
+	}
+
+	$cart_item_data = array( 'bizupkeep_workflow_uuid' => $workflow_uuid );
+
+	if ( null !== $quote_amount ) {
+		$cart_item_data['bizupkeep_quote_amount'] = $quote_amount;
+	}
+
+	return false !== WC()->cart->add_to_cart( $product_id, 1, 0, array(), $cart_item_data );
+}
 
 /**
  * SKU of the hidden, zero-priced "Annual Return Filing Fee" product
@@ -3171,11 +3370,14 @@ const BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU = 'bizupkeep-annual-return-fee';
 
 /**
  * Carries the company UUID being paid for through the "Bookkeeping
- * Monthly Access" checkout flow - same session->order-meta pattern as
- * BIZUPKEEP_PAYMENT_SESSION_KEY above, just company-scoped instead of
- * workflow-scoped (a bookkeeping subscription isn't tied to any one
- * workflow application). See bizupkeep_child_handle_bookkeeping_subscription_payment_intent()
- * / bizupkeep_child_attach_bookkeeping_subscription_to_order().
+ * Monthly Access" checkout flow - a WC-session->order-meta pattern
+ * (unlike the CIPC application flow above, this one is deliberately
+ * left as a single global session value/cleared cart: a client only
+ * ever has one bookkeeping subscription to renew at a time, and this
+ * flow is expected to be replaced once the Stub bookkeeping
+ * integration lands). See
+ * bizupkeep_child_handle_bookkeeping_subscription_payment_intent() /
+ * bizupkeep_child_attach_bookkeeping_subscription_to_order().
  */
 const BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_SESSION_KEY = 'bizupkeep_bookkeeping_subscription_company_uuid';
 
@@ -3196,7 +3398,7 @@ const BIZUPKEEP_BOOKKEEPING_SUBSCRIPTION_PRODUCT_SKU = 'bizupkeep-bookkeeping-mo
  * since the product's URL is the one stable identifier actually known
  * here; nothing requires staff to also set a matching SKU.
  * bizupkeep_child_handle_registration_payment_intent() adds this one
- * product to a cleared cart rather than sending the client to browse a
+ * product to the cart rather than sending the client to browse a
  * category, matching how bizupkeep_child_resolve_amendment_product_id()
  * routes each Amendment combination to its own real product.
  */
@@ -3306,15 +3508,22 @@ function bizupkeep_child_resolve_amendment_service_key( array $amendmentTypes ):
 }
 
 /**
- * Post A2Z's own revenue for a confirmed WooCommerce order into its
+ * Post A2Z's own revenue for a confirmed WooCommerce order (or one
+ * line item of one, now that an order can cover several applications
+ * at once - see bizupkeep_child_handle_order_payment()) into its
  * Internal Books company (see InternalBooksPage), using the Service
  * catalog (round 2 of the WooCommerce service-catalog plan) to decide
- * VAT treatment - deliberately best-effort: called from inside its
- * own try/catch by every caller, since a failure here must never be
+ * VAT treatment - deliberately best-effort: called from inside its own
+ * try/catch by every caller, since a failure here must never be
  * allowed to affect the actual payment/subscription confirmation that
- * already succeeded by the time this runs.
+ * already succeeded by the time this runs. Takes the amount and
+ * description explicitly (an item's own total and a description
+ * naming it, or the whole order's total for a single-item flow like
+ * the Bookkeeping Monthly subscription) rather than deriving them from
+ * `$order` itself, since `$order->get_total()` is no longer
+ * necessarily what this one posting is for.
  */
-function bizupkeep_child_post_a2z_revenue( string $service_key, WC_Order $order ): void {
+function bizupkeep_child_post_a2z_revenue( string $service_key, WC_Order $order, float $amount, string $description ): void {
 	$internal_company_uuid = get_option( 'bizupkeep_bookkeeping_internal_company_uuid' );
 
 	if ( ! is_string( $internal_company_uuid ) || '' === $internal_company_uuid ) {
@@ -3345,10 +3554,10 @@ function bizupkeep_child_post_a2z_revenue( string $service_key, WC_Order $order 
 
 	$data = new CaptureTransactionData(
 		date: new \DateTimeImmutable(),
-		amount: BookkeepingMoney::fromRands( (float) $order->get_total() ),
+		amount: BookkeepingMoney::fromRands( $amount ),
 		categoryAccountUuid: $account->uuid,
 		paymentMethod: BookkeepingPaymentMethod::Bank,
-		description: sprintf( '%s - Order #%d', $service->name, $order->get_id() ),
+		description: sprintf( '%s - %s', $service->name, $description ),
 		includesVat: $includes_vat
 	);
 
@@ -3359,28 +3568,82 @@ function bizupkeep_child_post_a2z_revenue( string $service_key, WC_Order $order 
 	);
 }
 
+/**
+ * wp-admin notice for staff with the bookkeeping.manage capability,
+ * shown whenever at least one WooCommerce order has a recorded
+ * A2Z revenue-posting failure (the _bizupkeep_a2z_revenue_failed meta
+ * set by bizupkeep_child_post_a2z_revenue()'s callers) - closes the
+ * gap where a failed automatic revenue post would otherwise only be
+ * noticed if/when someone spots a mismatch in Internal Books' own
+ * statements. Cleared automatically the next time that order's status
+ * changes and posting succeeds.
+ */
+function bizupkeep_child_render_a2z_revenue_failure_notice(): void {
+	if ( ! function_exists( 'wc_get_orders' ) || ! function_exists( 'bizhub' ) || null === bizhub() ) {
+		return;
+	}
+
+	$can_manage = bizhub()->container()->get( AuthorizationServiceInterface::class )->can(
+		get_current_user_id(),
+		BookkeepingCapabilities::BOOKKEEPING_MANAGE
+	);
+
+	if ( ! $can_manage ) {
+		return;
+	}
+
+	$failed_order_ids = wc_get_orders(
+		array(
+			'meta_key' => '_bizupkeep_a2z_revenue_failed', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key -- staff-only admin notice, bounded to 5 results.
+			'limit'    => 5,
+			'return'   => 'ids',
+		)
+	);
+
+	if ( empty( $failed_order_ids ) ) {
+		return;
+	}
+
+	$count = count( $failed_order_ids );
+
+	echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html(
+		sprintf(
+			/* translators: %d: number of WooCommerce orders. */
+			_n(
+				'%d order failed to post its A2Z revenue automatically - check Internal Books and capture it manually.',
+				'%d orders failed to post their A2Z revenue automatically - check Internal Books and capture them manually.',
+				$count,
+				'bizupkeep-astra-child'
+			),
+			$count
+		)
+	) . '</p></div>';
+}
+
 if ( class_exists( 'WooCommerce' ) ) {
 	add_action( 'template_redirect', 'bizupkeep_child_handle_registration_payment_intent' );
 	add_action( 'template_redirect', 'bizupkeep_child_handle_annual_return_payment_intent' );
 	add_action( 'template_redirect', 'bizupkeep_child_handle_amendment_payment_intent' );
-	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_workflow_to_order', 10, 2 );
+	add_action( 'woocommerce_checkout_create_order_line_item', 'bizupkeep_child_attach_workflow_to_order_item', 10, 4 );
 	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_order_payment', 10, 4 );
 	add_action( 'woocommerce_before_calculate_totals', 'bizupkeep_child_apply_annual_return_quote_price' );
 
 	add_action( 'template_redirect', 'bizupkeep_child_handle_bookkeeping_subscription_payment_intent' );
 	add_action( 'woocommerce_checkout_create_order', 'bizupkeep_child_attach_bookkeeping_subscription_to_order', 10, 2 );
 	add_action( 'woocommerce_order_status_changed', 'bizupkeep_child_handle_bookkeeping_subscription_order_payment', 10, 4 );
+
+	add_action( 'admin_notices', 'bizupkeep_child_render_a2z_revenue_failure_notice' );
 }
 
 /**
- * Build the "Pay Now" URL for a Company Registration application
+ * Build the "Add to Cart" URL for a Company Registration application
  * specifically - routes straight to
  * bizupkeep_child_handle_registration_payment_intent(), which adds the
- * fixed New Company Registration product to a cleared cart and
- * redirects straight to checkout. Mirrors
- * bizupkeep_child_amendment_payment_url()'s pattern; unlike Amendment
- * there's only ever the one product, since Registration has no
- * sub-types to combine.
+ * fixed New Company Registration product to the cart (alongside
+ * whatever else may already be there) and sends the client to the
+ * cart page. Mirrors bizupkeep_child_amendment_payment_url()'s
+ * pattern; unlike Amendment there's only ever the one product, since
+ * Registration has no sub-types to combine.
  */
 function bizupkeep_child_registration_payment_url( string $workflow_uuid ): string {
 	return add_query_arg(
@@ -3395,18 +3658,17 @@ function bizupkeep_child_registration_payment_url( string $workflow_uuid ): stri
  * application belongs to the logged-in client and is actually a
  * Company Registration sitting in AwaitingPayment, then add the fixed
  * New Company Registration product
- * (BIZUPKEEP_REGISTRATION_PRODUCT_SLUG) to a cleared cart and send the
- * client straight to checkout - the same "clear the cart first"
- * precaution bizupkeep_child_handle_amendment_payment_intent() takes,
- * so a Registration payment is never accidentally combined with an
- * unrelated item.
+ * (BIZUPKEEP_REGISTRATION_PRODUCT_SLUG) to the cart via
+ * bizupkeep_child_add_workflow_to_cart() and send the client to the
+ * cart page - not straight to checkout, so they can add another
+ * service's application before paying.
  */
 function bizupkeep_child_handle_registration_payment_intent(): void {
 	if ( ! isset( $_GET['bizupkeep_pay_registration'] ) || ! is_user_logged_in() ) {
 		return;
 	}
 
-	if ( null === WC()->cart || null === WC()->session ) {
+	if ( null === WC()->cart ) {
 		return;
 	}
 
@@ -3424,27 +3686,23 @@ function bizupkeep_child_handle_registration_payment_intent(): void {
 
 	$product_id = bizupkeep_child_get_product_id_by_slug( BIZUPKEEP_REGISTRATION_PRODUCT_SLUG );
 
-	if ( 0 === $product_id ) {
+	if ( 0 === $product_id || ! bizupkeep_child_add_workflow_to_cart( $workflow_uuid, $product_id ) ) {
 		wp_safe_redirect( $fallback_url );
 		exit;
 	}
 
-	WC()->cart->empty_cart();
-	WC()->cart->add_to_cart( $product_id, 1 );
-	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $workflow_uuid );
-
-	wp_safe_redirect( wc_get_checkout_url() );
+	wp_safe_redirect( wc_get_cart_url() );
 	exit;
 }
 
 /**
- * Build the "Pay Now" URL for an Annual Return application
+ * Build the "Add to Cart" URL for an Annual Return application
  * specifically - unlike bizupkeep_child_registration_payment_url()/
  * bizupkeep_child_amendment_payment_url() (fixed real WooCommerce
  * products), this doesn't send the client anywhere to pick a product:
  * it goes straight to bizupkeep_child_handle_annual_return_payment_intent(),
- * which adds the hidden fee product to a cleared cart at the exact
- * quoted amount and redirects straight to checkout.
+ * which adds the hidden fee product to the cart at the exact quoted
+ * amount and sends the client to the cart page.
  */
 function bizupkeep_child_annual_return_payment_url( string $workflow_uuid ): string {
 	return add_query_arg(
@@ -3460,19 +3718,20 @@ function bizupkeep_child_annual_return_payment_url( string $workflow_uuid ): str
  * Return sitting in AwaitingPayment, and has a positive quote_amount
  * on file (all three should already be true by the time a "Pay Now"
  * link exists at all, but this is the actual trust boundary, not the
- * link) - then clear the cart, add the hidden fee product, stash both
- * the workflow UUID and the quoted amount in the WooCommerce session,
- * and send the client straight to checkout. The cart is deliberately
- * emptied first so an Annual Return payment is never accidentally
- * combined with an unrelated Company Registration package sitting in
- * the same cart.
+ * link) - then add the hidden fee product to the cart carrying the
+ * quoted amount as cart-item data (bizupkeep_child_add_workflow_to_cart()),
+ * and send the client to the cart page. Each Annual Return fee line
+ * item carries its own quoted amount independently (see
+ * bizupkeep_child_apply_annual_return_quote_price()), so more than one
+ * can sit in the cart at once - e.g. filings for two different
+ * companies - each priced correctly.
  */
 function bizupkeep_child_handle_annual_return_payment_intent(): void {
 	if ( ! isset( $_GET['bizupkeep_pay_annual_return'] ) || ! is_user_logged_in() ) {
 		return;
 	}
 
-	if ( null === WC()->cart || null === WC()->session ) {
+	if ( null === WC()->cart ) {
 		return;
 	}
 
@@ -3497,47 +3756,32 @@ function bizupkeep_child_handle_annual_return_payment_intent(): void {
 
 	$product_id = bizupkeep_child_get_or_create_annual_return_fee_product();
 
-	if ( 0 === $product_id ) {
+	if ( 0 === $product_id
+		|| ! bizupkeep_child_add_workflow_to_cart( $workflow_uuid, $product_id, (float) $quote_amount )
+	) {
 		wp_safe_redirect( $fallback_url );
 		exit;
 	}
 
-	WC()->cart->empty_cart();
-	WC()->cart->add_to_cart( $product_id, 1 );
-	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $workflow_uuid );
-	WC()->session->set( BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY, (float) $quote_amount );
-
-	wp_safe_redirect( wc_get_checkout_url() );
+	wp_safe_redirect( wc_get_cart_url() );
 	exit;
 }
 
 /**
- * Override the hidden fee product's cart-item price to whatever
- * amount was stashed in session when the client clicked "Pay Now" -
- * the standard WooCommerce pattern for a variable/custom-amount
- * product (the product's own listed price is just a 0 placeholder,
- * since it's never meant to be added to a cart any way other than via
- * bizupkeep_child_handle_annual_return_payment_intent()).
+ * Override each Annual Return fee cart item's price to whatever amount
+ * was stashed on it (as cart-item data) when the client added it via
+ * bizupkeep_child_handle_annual_return_payment_intent() - the standard
+ * WooCommerce pattern for a variable/custom-amount product (the
+ * product's own listed price is just a 0 placeholder), generalized to
+ * per-item rather than a single cart-wide session value so more than
+ * one differently-quoted Annual Return fee can sit in the cart at
+ * once.
  */
 function bizupkeep_child_apply_annual_return_quote_price( WC_Cart $cart ): void {
-	if ( null === WC()->session ) {
-		return;
-	}
-
-	$amount = WC()->session->get( BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY );
-
-	if ( ! is_numeric( $amount ) || (float) $amount <= 0 ) {
-		return;
-	}
-
-	$product_id = wc_get_product_id_by_sku( BIZUPKEEP_ANNUAL_RETURN_FEE_PRODUCT_SKU );
-
-	if ( ! $product_id ) {
-		return;
-	}
-
 	foreach ( $cart->get_cart() as $cart_item ) {
-		if ( (int) $cart_item['product_id'] === (int) $product_id ) {
+		$amount = $cart_item['bizupkeep_quote_amount'] ?? null;
+
+		if ( is_numeric( $amount ) && (float) $amount > 0 ) {
 			$cart_item['data']->set_price( (float) $amount );
 		}
 	}
@@ -3574,13 +3818,13 @@ function bizupkeep_child_get_or_create_annual_return_fee_product(): int {
 
 
 /**
- * Build the "Pay Now" URL for a Company Amendment application
+ * Build the "Add to Cart" URL for a Company Amendment application
  * specifically - unlike bizupkeep_child_registration_payment_url()
  * (always the one fixed Registration product, since Registration has
  * no sub-types to combine), this routes straight to
  * bizupkeep_child_handle_amendment_payment_intent(), which adds the ONE
- * product matching this application's exact amendment_types to a
- * cleared cart and redirects straight to checkout.
+ * product matching this application's exact amendment_types to the
+ * cart and sends the client to the cart page.
  */
 function bizupkeep_child_amendment_payment_url( string $workflow_uuid ): string {
 	return add_query_arg(
@@ -3594,19 +3838,18 @@ function bizupkeep_child_amendment_payment_url( string $workflow_uuid ): string 
  * Handle ?bizupkeep_pay_amendment={workflow_uuid}: verify the
  * application belongs to the logged-in client and is actually a
  * Company Amendment sitting in AwaitingPayment (both should already be
- * true by the time a "Pay Now" link exists at all, but this is the
- * actual trust boundary, not the link) - then resolve the ONE real
- * product matching its amendment_types, clear the cart, add that
- * product, and send the client straight to checkout. The cart is
- * deliberately emptied first so an Amendment payment is never
- * accidentally combined with an unrelated item.
+ * true by the time a "Pay Now"/"Add to Cart" link exists at all, but
+ * this is the actual trust boundary, not the link) - then resolve the
+ * ONE real product matching its amendment_types, add it to the cart
+ * via bizupkeep_child_add_workflow_to_cart(), and send the client to
+ * the cart page so they can add another service before checking out.
  */
 function bizupkeep_child_handle_amendment_payment_intent(): void {
 	if ( ! isset( $_GET['bizupkeep_pay_amendment'] ) || ! is_user_logged_in() ) {
 		return;
 	}
 
-	if ( null === WC()->cart || null === WC()->session ) {
+	if ( null === WC()->cart ) {
 		return;
 	}
 
@@ -3627,40 +3870,33 @@ function bizupkeep_child_handle_amendment_payment_intent(): void {
 		? bizupkeep_child_resolve_amendment_product_id( $amendment_types )
 		: 0;
 
-	if ( 0 === $product_id ) {
+	if ( 0 === $product_id || ! bizupkeep_child_add_workflow_to_cart( $workflow_uuid, $product_id ) ) {
 		wp_safe_redirect( $fallback_url );
 		exit;
 	}
 
-	WC()->cart->empty_cart();
-	WC()->cart->add_to_cart( $product_id, 1 );
-	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, $workflow_uuid );
-
-	wp_safe_redirect( wc_get_checkout_url() );
+	wp_safe_redirect( wc_get_cart_url() );
 	exit;
 }
 
 /**
- * At checkout, copy the pending application's workflow UUID from the
- * WooCommerce session onto the new order as post meta, so it survives
- * past the session into something permanently queryable against the
- * order. Re-verifies ownership again here rather than trusting the
- * session value blindly - it could otherwise be replayed by switching
+ * At checkout, copy each cart line item's application-linking data
+ * (bizupkeep_workflow_uuid, and for Annual Return
+ * bizupkeep_quote_amount - set by bizupkeep_child_add_workflow_to_cart())
+ * from the cart onto the corresponding new order LINE ITEM's meta, so
+ * it survives past the cart/session into something permanently
+ * queryable against the order - per item rather than per order, so an
+ * order covering several applications keeps each one's linkage
+ * distinct. Re-verifies ownership again here rather than trusting the
+ * cart-item data blindly - it could otherwise be replayed by switching
  * accounts in another tab before completing checkout.
  */
-function bizupkeep_child_attach_workflow_to_order( WC_Order $order, array $data ): void {
-	if ( null === WC()->session ) {
-		return;
-	}
-
-	$workflow_uuid = WC()->session->get( BIZUPKEEP_PAYMENT_SESSION_KEY );
+function bizupkeep_child_attach_workflow_to_order_item( WC_Order_Item_Product $item, string $cart_item_key, array $values, WC_Order $order ): void {
+	$workflow_uuid = $values['bizupkeep_workflow_uuid'] ?? null;
 
 	if ( ! is_string( $workflow_uuid ) || '' === $workflow_uuid ) {
 		return;
 	}
-
-	WC()->session->set( BIZUPKEEP_PAYMENT_SESSION_KEY, null );
-	WC()->session->set( BIZUPKEEP_ANNUAL_RETURN_AMOUNT_SESSION_KEY, null );
 
 	$wp_user_id = get_current_user_id();
 
@@ -3668,31 +3904,27 @@ function bizupkeep_child_attach_workflow_to_order( WC_Order $order, array $data 
 		return;
 	}
 
-	$order->update_meta_data( '_bizupkeep_workflow_uuid', $workflow_uuid );
+	$item->add_meta_data( '_bizupkeep_workflow_uuid', $workflow_uuid );
+
+	if ( isset( $values['bizupkeep_quote_amount'] ) && is_numeric( $values['bizupkeep_quote_amount'] ) ) {
+		$item->add_meta_data( '_bizupkeep_quote_amount', (float) $values['bizupkeep_quote_amount'] );
+	}
 }
 
 /**
  * When an order's status changes to processing or completed, confirm
- * payment on the application it was attached to (if any) - moving
- * AwaitingPayment to Processing, dispatched to whichever workflow type
- * that application actually is. Guarded so this only ever fires once
- * per order (mirrors the idempotency pattern
- * Integrations/WooCommerce/OrderListener.php already uses for its own,
- * unrelated purpose) and only while the application is genuinely still
- * waiting on payment.
+ * payment on every application attached to one of its line items (an
+ * order can now cover several - see the docblock on the "Payment ...
+ * via a real WooCommerce cart" section above) - moving each one from
+ * AwaitingPayment to Processing independently, dispatched to whichever
+ * workflow type that application actually is. Idempotency (mirrors the
+ * pattern Integrations/WooCommerce/OrderListener.php already uses for
+ * its own, unrelated purpose) and the "still genuinely waiting on
+ * payment" guard are both now per line item rather than per order, so
+ * one item's failure can't block another's in the same order.
  */
 function bizupkeep_child_handle_order_payment( int $order_id, string $old_status, string $new_status, WC_Order $order ): void {
 	if ( ! in_array( $new_status, array( 'processing', 'completed' ), true ) ) {
-		return;
-	}
-
-	if ( '1' === $order->get_meta( '_bizupkeep_payment_confirmed' ) ) {
-		return;
-	}
-
-	$workflow_uuid = $order->get_meta( '_bizupkeep_workflow_uuid' );
-
-	if ( ! is_string( $workflow_uuid ) || '' === $workflow_uuid ) {
 		return;
 	}
 
@@ -3701,59 +3933,88 @@ function bizupkeep_child_handle_order_payment( int $order_id, string $old_status
 	}
 
 	$workflows = bizhub()->container()->get( WorkflowRepositoryInterface::class );
-	$instance  = $workflows->find( $workflow_uuid );
 
-	if ( null === $instance || WorkflowStatus::AwaitingPayment !== $instance->getStatus() ) {
-		return;
-	}
-
-	try {
-		$service = bizupkeep_child_workflow_type_service( $instance->getWorkflowType() );
-
-		// 'confirm_payment' is a shared action-name literal across all
-		// three workflow type Definitions.
-		$service->performAction(
-			$instance->getUuid(),
-			'confirm_payment',
-			(int) $order->get_customer_id(),
-			sprintf(
-				/* translators: %d: WooCommerce order ID. */
-				__( 'Payment confirmed via order #%d.', 'bizupkeep-astra-child' ),
-				$order_id
-			),
-			array( 'payment_reference' => (string) $order_id )
-		);
-
-		$order->update_meta_data( '_bizupkeep_payment_confirmed', '1' );
-
-		// Best-effort A2Z revenue posting - deliberately its own inner
-		// try/catch, separate from the outer one: a failure here must
-		// never be mistaken for confirm_payment() itself having failed,
-		// which would incorrectly leave the workflow at AwaitingPayment
-		// when the customer's payment actually succeeded.
-		try {
-			$service_key = match ( $instance->getWorkflowType() ) {
-				CompanyRegistrationDefinition::TYPE => 'registration',
-				AnnualReturnDefinition::TYPE => 'annual_return_fee',
-				CompanyAmendmentDefinition::TYPE => bizupkeep_child_resolve_amendment_service_key(
-					$instance->getMetadata()['amendment_types'] ?? array()
-				),
-				default => null,
-			};
-
-			if ( null !== $service_key ) {
-				bizupkeep_child_post_a2z_revenue( $service_key, $order );
-				$order->update_meta_data( '_bizupkeep_a2z_revenue_posted', '1' );
-			}
-		} catch ( \Throwable $e ) {
-			// Best-effort only - staff can capture the missed revenue
-			// manually via Internal Books.
+	foreach ( $order->get_items() as $item ) {
+		if ( ! $item instanceof WC_Order_Item_Product ) {
+			continue;
 		}
 
-		$order->save();
-	} catch ( \Throwable $e ) {
-		// Leave the workflow at AwaitingPayment - resolvable manually,
-		// or automatically on the order's next status change.
+		if ( '1' === $item->get_meta( '_bizupkeep_payment_confirmed' ) ) {
+			continue;
+		}
+
+		$workflow_uuid = $item->get_meta( '_bizupkeep_workflow_uuid' );
+
+		if ( ! is_string( $workflow_uuid ) || '' === $workflow_uuid ) {
+			continue;
+		}
+
+		$instance = $workflows->find( $workflow_uuid );
+
+		if ( null === $instance || WorkflowStatus::AwaitingPayment !== $instance->getStatus() ) {
+			continue;
+		}
+
+		try {
+			$service = bizupkeep_child_workflow_type_service( $instance->getWorkflowType() );
+
+			// 'confirm_payment' is a shared action-name literal across all
+			// three workflow type Definitions.
+			$service->performAction(
+				$instance->getUuid(),
+				'confirm_payment',
+				(int) $order->get_customer_id(),
+				sprintf(
+					/* translators: 1: WooCommerce order ID, 2: order line item ID. */
+					__( 'Payment confirmed via order #%1$d (item #%2$d).', 'bizupkeep-astra-child' ),
+					$order_id,
+					$item->get_id()
+				),
+				array( 'payment_reference' => (string) $order_id )
+			);
+
+			$item->add_meta_data( '_bizupkeep_payment_confirmed', '1', true );
+
+			// Best-effort A2Z revenue posting - deliberately its own inner
+			// try/catch, separate from the outer one: a failure here must
+			// never be mistaken for confirm_payment() itself having failed,
+			// which would incorrectly leave the workflow at AwaitingPayment
+			// when the customer's payment actually succeeded.
+			try {
+				$service_key = match ( $instance->getWorkflowType() ) {
+					CompanyRegistrationDefinition::TYPE => 'registration',
+					AnnualReturnDefinition::TYPE => 'annual_return_fee',
+					CompanyAmendmentDefinition::TYPE => bizupkeep_child_resolve_amendment_service_key(
+						$instance->getMetadata()['amendment_types'] ?? array()
+					),
+					default => null,
+				};
+
+				if ( null !== $service_key ) {
+					bizupkeep_child_post_a2z_revenue(
+						$service_key,
+						$order,
+						(float) $item->get_total(),
+						sprintf( 'Order #%1$d, item #%2$d', $order_id, $item->get_id() )
+					);
+					$item->add_meta_data( '_bizupkeep_a2z_revenue_posted', '1', true );
+					$item->delete_meta_data( '_bizupkeep_a2z_revenue_failed' );
+				}
+			} catch ( \Throwable $e ) {
+				// Best-effort only - staff can capture the missed revenue
+				// manually via Internal Books. Recorded on the item so
+				// bizupkeep_child_render_a2z_revenue_failure_notice() can
+				// surface it to staff instead of the gap only being noticed
+				// if/when someone spots a mismatch in the books.
+				$item->add_meta_data( '_bizupkeep_a2z_revenue_failed', $e->getMessage(), true );
+			}
+
+			$item->save();
+		} catch ( \Throwable $e ) {
+			// Leave this application at AwaitingPayment - resolvable
+			// manually, or automatically on the order's next status
+			// change. Other line items in the same order still proceed.
+		}
 	}
 }
 
@@ -4290,10 +4551,12 @@ function bizupkeep_child_is_bookkeeping_page(): bool {
 | Bookkeeping monthly subscription (WooCommerce checkout)
 |--------------------------------------------------------------------------
 |
-| Mirrors bizupkeep_child_handle_amendment_payment_intent()'s exact
-| pattern (see the doc comment above BIZUPKEEP_PAYMENT_SESSION_KEY for
-| the full session -> order-meta -> order-status-changed flow this
-| copies), scoped to a company UUID instead of a workflow UUID, since a
+| Mirrors bizupkeep_child_handle_amendment_payment_intent()'s ORIGINAL
+| single-item pattern (session -> order-meta -> order-status-changed),
+| deliberately not migrated to the cart-item-data mechanism the CIPC
+| application flow now uses, since a company only ever has one
+| bookkeeping subscription to renew at a time - scoped to a company
+| UUID instead of a workflow UUID, since a
 | bookkeeping subscription isn't tied to any one application. A
 | successful payment calls SubscriptionServiceInterface::extend() - the
 | same call the bizupkeep-bookkeeping plugin's staff-facing "Extend 30
@@ -4433,9 +4696,11 @@ function bizupkeep_child_handle_bookkeeping_subscription_payment_intent(): void 
 
 /**
  * At checkout, copy the company UUID from the WooCommerce session onto
- * the new order as post meta - mirrors
- * bizupkeep_child_attach_workflow_to_order() exactly, re-verifying
- * ownership again here rather than trusting the session value blindly.
+ * the new order as post meta - the original single-item session ->
+ * order-meta pattern bizupkeep_child_attach_workflow_to_order_item()'s
+ * predecessor used too, kept here deliberately (see the "Bookkeeping
+ * monthly subscription" section header above), re-verifying ownership
+ * again here rather than trusting the session value blindly.
  */
 function bizupkeep_child_attach_bookkeeping_subscription_to_order( WC_Order $order, array $data ): void {
 	if ( null === WC()->session ) {
@@ -4462,10 +4727,12 @@ function bizupkeep_child_attach_bookkeeping_subscription_to_order( WC_Order $ord
 /**
  * When an order's status changes to processing or completed, extend
  * the paid-for company's bookkeeping subscription by 30 days - mirrors
- * bizupkeep_child_handle_order_payment()'s idempotency-guarded pattern
- * exactly, reading exclusively from order meta (never session, which
- * may not be available in this hook's context - see the doc comment
- * above BIZUPKEEP_PAYMENT_SESSION_KEY).
+ * bizupkeep_child_handle_order_payment()'s idempotency-guarded pattern,
+ * reading exclusively from order meta (never session, which may not be
+ * available in this hook's context) - unlike that function, this one
+ * stays order-level rather than per-line-item, since this flow was
+ * deliberately not migrated to multi-item carts (see the "Bookkeeping
+ * monthly subscription" section header above).
  */
 function bizupkeep_child_handle_bookkeeping_subscription_order_payment( int $order_id, string $old_status, string $new_status, WC_Order $order ): void {
 	if ( ! in_array( $new_status, array( 'processing', 'completed' ), true ) ) {
@@ -4496,11 +4763,21 @@ function bizupkeep_child_handle_bookkeeping_subscription_order_payment( int $ord
 		// be mistaken for the subscription extension itself having
 		// failed.
 		try {
-			bizupkeep_child_post_a2z_revenue( 'bookkeeping_monthly', $order );
+			bizupkeep_child_post_a2z_revenue(
+				'bookkeeping_monthly',
+				$order,
+				(float) $order->get_total(),
+				sprintf( 'Order #%d', $order_id )
+			);
 			$order->update_meta_data( '_bizupkeep_a2z_revenue_posted', '1' );
+			$order->delete_meta_data( '_bizupkeep_a2z_revenue_failed' );
 		} catch ( \Throwable $e ) {
 			// Best-effort only - staff can capture the missed revenue
-			// manually via Internal Books.
+			// manually via Internal Books. Recorded on the order so
+			// bizupkeep_child_render_a2z_revenue_failure_notice() can
+			// surface it to staff instead of the gap only being noticed
+			// if/when someone spots a mismatch in the books.
+			$order->update_meta_data( '_bizupkeep_a2z_revenue_failed', $e->getMessage() );
 		}
 
 		$order->save();

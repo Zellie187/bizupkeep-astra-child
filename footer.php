@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 			<div class="bizupkeep-footer-columns">
 				<div class="bizupkeep-footer-column bizupkeep-footer-about">
-					<h3 class="bizupkeep-footer-heading"><?php bloginfo( 'name' ); ?></h3>
+					<img src="<?php echo esc_url( get_stylesheet_directory_uri() . '/assets/images/logo-dark.svg' ); ?>" alt="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>" class="bizupkeep-footer-logo">
 					<p><?php esc_html_e( 'Company registration and compliance services, made simple.', 'bizupkeep-astra-child' ); ?></p>
 				</div>
 

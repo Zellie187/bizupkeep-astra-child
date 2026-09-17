@@ -134,7 +134,7 @@ get_header();
 						<li><?php esc_html_e( 'Export-ready data, any time', 'bizupkeep-astra-child' ); ?></li>
 					</ul>
 					<p class="bizupkeep-package-cta">
-						<a href="<?php echo esc_url( home_url( '/apply/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Apply Now', 'bizupkeep-astra-child' ); ?></a>
+						<a href="<?php echo esc_url( home_url( '/contact-us/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary"><?php esc_html_e( 'Request a Call Back', 'bizupkeep-astra-child' ); ?></a>
 					</p>
 				</div>
 

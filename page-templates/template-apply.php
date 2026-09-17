@@ -35,16 +35,39 @@ get_header();
 <main id="bizupkeep-apply" class="bizupkeep-apply">
 	<div class="bizupkeep-apply-inner">
 
-		<?php if ( isset( $_GET['submitted'] ) ) : ?>
+		<?php
+		if ( isset( $_GET['submitted'] ) ) :
+			// Registration/Amendment are added straight to the cart at
+			// submission (bizupkeep_child_submit_new_registration()/
+			// bizupkeep_child_submit_company_amendment()); Annual Return
+			// is not - it stays "Awaiting Staff Review" until CIPC is
+			// checked and a quote is sent, so there's nothing to add to
+			// a cart yet.
+			$app_type    = isset( $_GET['app_type'] ) ? sanitize_text_field( wp_unslash( $_GET['app_type'] ) ) : '';
+			$added_to_cart = in_array( $app_type, array( 'new_registration', 'company_amendment' ), true );
+			?>
 
 			<span class="bizupkeep-status-pill"><?php esc_html_e( 'Application Received', 'bizupkeep-astra-child' ); ?></span>
 			<h1><?php esc_html_e( "Thanks - we've received your application.", 'bizupkeep-astra-child' ); ?></h1>
-			<p><?php esc_html_e( 'One of our consultants will be in touch shortly. You can track its status from your Client Portal.', 'bizupkeep-astra-child' ); ?></p>
-			<p>
-				<a href="<?php echo esc_url( home_url( '/client-portal/client-portal-applications/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
-					<?php esc_html_e( 'View My Applications', 'bizupkeep-astra-child' ); ?>
-				</a>
-			</p>
+
+			<?php if ( $added_to_cart ) : ?>
+				<p><?php esc_html_e( "We've added it to your cart. Start another application to add more services, or check out whenever you're ready - you can upload supporting documents from your Client Portal any time before or after paying.", 'bizupkeep-astra-child' ); ?></p>
+				<p>
+					<a href="<?php echo esc_url( function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : home_url( '/client-portal/client-portal-applications/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
+						<?php esc_html_e( 'View Cart', 'bizupkeep-astra-child' ); ?>
+					</a>
+					<a href="<?php echo esc_url( home_url( '/client-portal/client-portal-applications/' ) ); ?>" class="bizupkeep-btn">
+						<?php esc_html_e( 'View My Applications', 'bizupkeep-astra-child' ); ?>
+					</a>
+				</p>
+			<?php else : ?>
+				<p><?php esc_html_e( 'One of our consultants will be in touch shortly. You can track its status from your Client Portal.', 'bizupkeep-astra-child' ); ?></p>
+				<p>
+					<a href="<?php echo esc_url( home_url( '/client-portal/client-portal-applications/' ) ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
+						<?php esc_html_e( 'View My Applications', 'bizupkeep-astra-child' ); ?>
+					</a>
+				</p>
+			<?php endif; ?>
 
 		<?php else : ?>
 

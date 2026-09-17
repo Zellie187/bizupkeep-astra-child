@@ -4,8 +4,11 @@
  * Description:   Client Portal application status page - one row per
  *                 application (workflow instance) the logged-in
  *                 client has, across all three workflow types, with
- *                 its own status, while AwaitingPayment a "Pay Now"
- *                 link into WooCommerce, and (this now absorbs what
+ *                 its own status, while AwaitingPayment an "Add to
+ *                 Cart" link into WooCommerce (a client can add more
+ *                 than one application before checking out - see
+ *                 bizupkeep_child_add_workflow_to_cart()), and (this
+ *                 now absorbs what
  *                 used to be the separate My Documents page) each
  *                 application's already-uploaded documents plus an
  *                 upload form while it's waiting on some. See
@@ -33,6 +36,20 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 	<div class="bizupkeep-applications-inner">
 
 		<h1><?php esc_html_e( 'My Applications', 'bizupkeep-astra-child' ); ?></h1>
+
+		<?php if ( class_exists( 'WooCommerce' ) && null !== WC()->cart && ! WC()->cart->is_empty() ) : ?>
+			<p>
+				<a href="<?php echo esc_url( wc_get_cart_url() ); ?>" class="bizupkeep-btn">
+					<?php
+					printf(
+						/* translators: %d: number of items in the cart. */
+						esc_html( _n( 'View Cart (%d item)', 'View Cart (%d items)', WC()->cart->get_cart_contents_count(), 'bizupkeep-astra-child' ) ),
+						(int) WC()->cart->get_cart_contents_count()
+					);
+					?>
+				</a>
+			</p>
+		<?php endif; ?>
 
 		<?php if ( isset( $_GET['names_resubmitted'] ) ) : ?>
 			<p class="bizupkeep-status-pill"><?php esc_html_e( 'New names submitted - your application is back in review.', 'bizupkeep-astra-child' ); ?></p>
@@ -91,7 +108,13 @@ $sections = bizupkeep_child_applications_sections( get_current_user_id() );
 								<?php endif; ?>
 								<?php if ( null !== $section['pay_url'] ) : ?>
 									<a href="<?php echo esc_url( $section['pay_url'] ); ?>" class="bizupkeep-btn bizupkeep-btn-primary">
-										<?php esc_html_e( 'Pay Now', 'bizupkeep-astra-child' ); ?>
+										<?php
+										echo esc_html(
+											bizupkeep_child_cart_has_workflow( $section['workflow_uuid'] )
+												? __( 'View Cart', 'bizupkeep-astra-child' )
+												: __( 'Add to Cart', 'bizupkeep-astra-child' )
+										);
+										?>
 									</a>
 								<?php endif; ?>
 							</td>
