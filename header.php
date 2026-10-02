@@ -14,6 +14,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 <head>
 	<meta charset="<?php bloginfo( 'charset' ); ?>">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<?php if ( ! has_site_icon() ) : ?>
+		<!-- Code-level default favicon so the site never ships with none.
+		     Superseded automatically the moment a real Site Icon is set
+		     under Settings -> General in wp-admin (WordPress then
+		     generates proper PNG/apple-touch-icon sizes itself via
+		     wp_head(), which this theme never overrides). -->
+		<link rel="icon" type="image/svg+xml" href="<?php echo esc_url( get_stylesheet_directory_uri() . '/assets/images/icon.svg' ); ?>">
+	<?php endif; ?>
 	<?php wp_head(); ?>
 </head>
 <body <?php body_class(); ?>>

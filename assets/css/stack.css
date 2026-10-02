@@ -1,0 +1,597 @@
+/**
+ * BizUpKeep - Startup Stack landing page styles.
+ *
+ * Only enqueued on page-templates/template-startup-stack.php (see
+ * bizupkeep_child_enqueue_assets() in functions.php), not sitewide -
+ * this page's look (2px solid borders, 6px radius, "pressed button"
+ * drop-shadows) is deliberately punchier/more startup-landing-page
+ * than the main site's softer pill-button system, so it isn't folded
+ * into custom.css's shared button/card rules.
+ *
+ * Reuses the same --bizupkeep-* color tokens from custom.css (already
+ * loaded first - see the 'bizupkeep-custom' dependency this
+ * stylesheet is enqueued with) rather than redefining its own colors.
+ */
+
+.bizupkeep-stack {
+	font-size: 17px;
+	line-height: 1.55;
+}
+
+.bizupkeep-stack h1,
+.bizupkeep-stack h2,
+.bizupkeep-stack h3 {
+	font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	margin: 0;
+}
+
+.bizupkeep-stack section,
+.bizupkeep-stack-hero {
+	padding: 84px 24px;
+}
+
+.bizupkeep-stack .bizupkeep-stack-hero-grid,
+.bizupkeep-stack-problem-grid,
+.bizupkeep-stack-pillars > h2,
+.bizupkeep-stack-pillars > .bizupkeep-stack-layer-stack,
+.bizupkeep-stack-steps > h2,
+.bizupkeep-stack-steps > ol,
+.bizupkeep-stack-pricing > h2,
+.bizupkeep-stack-pricing > .bizupkeep-stack-lede,
+.bizupkeep-stack-pricing > .bizupkeep-stack-build,
+.bizupkeep-stack-pricing > .bizupkeep-stack-equals-row,
+.bizupkeep-stack-pricing > .bizupkeep-stack-bundle-card,
+.bizupkeep-stack-pricing > .bizupkeep-stack-scale-card,
+.bizupkeep-stack-why > h2,
+.bizupkeep-stack-why > .bizupkeep-stack-why-list,
+.bizupkeep-stack-faq > h2,
+.bizupkeep-stack-faq > .bizupkeep-stack-faq-item {
+	max-width: 1080px;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+@media (max-width: 720px) {
+	.bizupkeep-stack section,
+	.bizupkeep-stack-hero {
+		padding: 52px 24px;
+	}
+
+	.bizupkeep-stack {
+		font-size: 16px;
+	}
+}
+
+/* ---------- Hero ---------- */
+.bizupkeep-stack-hero {
+	background: var(--bizupkeep-paper);
+	position: relative;
+	overflow: hidden;
+}
+
+.bizupkeep-stack-hero-grid {
+	display: grid;
+	grid-template-columns: 1.3fr 0.7fr;
+	gap: 40px;
+	align-items: center;
+}
+
+@media (max-width: 820px) {
+	.bizupkeep-stack-hero-grid {
+		grid-template-columns: 1fr;
+	}
+}
+
+.bizupkeep-stack-hero h1 {
+	font-size: clamp(2.2rem, 4.8vw, 3.4rem);
+	line-height: 1.09;
+	max-width: 16ch;
+}
+
+.bizupkeep-stack-hero p {
+	max-width: 48ch;
+	margin: 24px 0 32px;
+	font-size: 19px;
+	color: #4C4A5A;
+}
+
+.bizupkeep-stack-hero-ctas {
+	display: flex;
+	align-items: center;
+	gap: 22px;
+	flex-wrap: wrap;
+}
+
+.bizupkeep-stack-btn-primary {
+	background: var(--bizupkeep-coral);
+	color: #fff;
+	font-weight: 600;
+	padding: 14px 26px;
+	border-radius: 6px;
+	text-decoration: none;
+	display: inline-block;
+	box-shadow: 0 6px 0 var(--bizupkeep-ink);
+	transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.bizupkeep-stack-btn-primary:hover {
+	transform: translateY(2px);
+	box-shadow: 0 4px 0 var(--bizupkeep-ink);
+}
+
+.bizupkeep-stack-link-quiet {
+	text-decoration: none;
+	border-bottom: 2px solid var(--bizupkeep-ink);
+	padding-bottom: 2px;
+	color: var(--bizupkeep-ink);
+	font-size: 15px;
+	font-weight: 500;
+}
+
+.bizupkeep-stack-hero-blocks {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+}
+
+.bizupkeep-stack-hero-block {
+	border-radius: 6px;
+	padding: 16px 20px;
+	font-family: 'Space Grotesk', sans-serif;
+	font-weight: 600;
+	font-size: 14.5px;
+	color: var(--bizupkeep-ink);
+	box-shadow: 0 3px 0 rgba(27, 26, 46, 0.15);
+}
+
+.bizupkeep-stack-hero-block + .bizupkeep-stack-hero-block {
+	margin-top: 12px;
+}
+
+.bizupkeep-stack-hb1 { background: var(--bizupkeep-coral-soft); margin-left: 0; width: 78%; }
+.bizupkeep-stack-hb2 { background: var(--bizupkeep-teal-soft); margin-left: 11%; width: 78%; }
+.bizupkeep-stack-hb3 { background: var(--bizupkeep-violet-soft); margin-left: 22%; width: 78%; }
+
+@media (max-width: 820px) {
+	.bizupkeep-stack-hero-blocks {
+		flex-direction: row;
+		flex-wrap: wrap;
+		margin-top: 8px;
+		gap: 12px;
+	}
+
+	.bizupkeep-stack-hero-block {
+		margin-left: 0 !important;
+		width: auto;
+	}
+}
+
+/* ---------- Problem ---------- */
+.bizupkeep-stack-problem {
+	background: var(--bizupkeep-tint-peach);
+}
+
+.bizupkeep-stack-problem-grid {
+	display: grid;
+	grid-template-columns: 0.9fr 1.1fr;
+	gap: 56px;
+}
+
+@media (max-width: 760px) {
+	.bizupkeep-stack-problem-grid {
+		grid-template-columns: 1fr;
+		gap: 20px;
+	}
+}
+
+.bizupkeep-stack-problem h2 {
+	font-size: clamp(1.6rem, 3vw, 2.1rem);
+	max-width: 12ch;
+}
+
+.bizupkeep-stack-copy p {
+	margin: 0 0 16px;
+	max-width: 52ch;
+	color: #3B3A36;
+}
+
+.bizupkeep-stack-copy p:last-child {
+	margin-bottom: 0;
+}
+
+.bizupkeep-stack-copy strong {
+	color: var(--bizupkeep-ink);
+}
+
+/* ---------- The stack (pillars) ---------- */
+.bizupkeep-stack-pillars > h2 {
+	font-size: clamp(1.6rem, 3vw, 2.1rem);
+	max-width: 14ch;
+	margin-bottom: 40px;
+}
+
+.bizupkeep-stack-layer-stack {
+	display: flex;
+	flex-direction: column;
+	max-width: 660px;
+}
+
+.bizupkeep-stack-layer {
+	border-radius: 6px;
+	padding: 24px 28px;
+	display: flex;
+	align-items: baseline;
+	gap: 22px;
+}
+
+.bizupkeep-stack-layer + .bizupkeep-stack-layer {
+	margin-top: 14px;
+}
+
+.bizupkeep-stack-l1 { background: var(--bizupkeep-coral-soft); }
+.bizupkeep-stack-l2 { background: var(--bizupkeep-teal-soft); }
+.bizupkeep-stack-l3 { background: var(--bizupkeep-violet-soft); }
+
+.bizupkeep-stack-num {
+	font-family: 'Space Grotesk', sans-serif;
+	font-weight: 700;
+	font-size: 14px;
+	color: #fff;
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.bizupkeep-stack-l1 .bizupkeep-stack-num { background: var(--bizupkeep-coral); }
+.bizupkeep-stack-l2 .bizupkeep-stack-num { background: var(--bizupkeep-teal); }
+.bizupkeep-stack-l3 .bizupkeep-stack-num { background: var(--bizupkeep-violet); }
+
+.bizupkeep-stack-layer h3 {
+	font-size: 18px;
+	margin-bottom: 4px;
+}
+
+.bizupkeep-stack-layer p {
+	margin: 0;
+	color: #3F3D4B;
+	font-size: 15.5px;
+	max-width: 44ch;
+}
+
+/* ---------- How it works ---------- */
+.bizupkeep-stack-steps {
+	background: var(--bizupkeep-tint-teal);
+}
+
+.bizupkeep-stack-steps > h2 {
+	font-size: clamp(1.6rem, 3vw, 2.1rem);
+	margin-bottom: 40px;
+	max-width: 14ch;
+}
+
+.bizupkeep-stack-steps ol {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 28px;
+}
+
+@media (max-width: 820px) {
+	.bizupkeep-stack-steps ol {
+		grid-template-columns: 1fr 1fr;
+		gap: 32px;
+	}
+}
+
+@media (max-width: 520px) {
+	.bizupkeep-stack-steps ol {
+		grid-template-columns: 1fr;
+	}
+}
+
+.bizupkeep-stack-steps li {
+	border-top: 3px solid var(--bizupkeep-teal);
+	padding-top: 14px;
+}
+
+.bizupkeep-stack-step-no {
+	font-family: 'Space Grotesk', sans-serif;
+	color: var(--bizupkeep-teal);
+	font-weight: 600;
+	font-size: 14px;
+	display: block;
+	margin-bottom: 8px;
+}
+
+.bizupkeep-stack-steps h3 {
+	font-size: 17px;
+	margin-bottom: 6px;
+}
+
+.bizupkeep-stack-steps p {
+	margin: 0;
+	color: #4C4A5A;
+	font-size: 15px;
+}
+
+/* ---------- Pricing / stack builder ---------- */
+.bizupkeep-stack-pricing {
+	background: var(--bizupkeep-paper);
+}
+
+.bizupkeep-stack-pricing > h2 {
+	font-size: clamp(1.6rem, 3vw, 2.1rem);
+	max-width: 16ch;
+}
+
+.bizupkeep-stack-lede {
+	color: #4C4A5A;
+	max-width: 54ch;
+	margin: 14px auto 48px;
+	font-size: 16px;
+}
+
+.bizupkeep-stack-build {
+	display: grid;
+	grid-template-columns: 1fr 40px 1fr;
+	align-items: center;
+	gap: 0;
+	margin-bottom: 14px;
+}
+
+@media (max-width: 720px) {
+	.bizupkeep-stack-build {
+		grid-template-columns: 1fr;
+	}
+}
+
+.bizupkeep-stack-plus {
+	font-family: 'Space Grotesk', sans-serif;
+	font-size: 24px;
+	font-weight: 700;
+	text-align: center;
+	color: var(--bizupkeep-ink);
+}
+
+@media (max-width: 720px) {
+	.bizupkeep-stack-plus {
+		padding: 10px 0;
+	}
+}
+
+.bizupkeep-stack-card {
+	border: 2px solid var(--bizupkeep-ink);
+	border-radius: 6px;
+	padding: 26px 28px;
+}
+
+.bizupkeep-stack-c1 { background: var(--bizupkeep-coral-soft); }
+.bizupkeep-stack-c2 { background: var(--bizupkeep-teal-soft); }
+
+.bizupkeep-stack-tier-price {
+	font-family: 'Space Grotesk', sans-serif;
+	font-size: 28px;
+	font-weight: 700;
+	margin: 10px 0 4px;
+	color: var(--bizupkeep-ink);
+}
+
+.bizupkeep-stack-tier-price span {
+	font-size: 15px;
+	font-weight: 500;
+	color: #5C5A68;
+}
+
+.bizupkeep-stack-tier-name {
+	font-size: 15px;
+	color: #3F3D4B;
+	font-weight: 600;
+}
+
+.bizupkeep-stack-tier-sub {
+	font-size: 14px;
+	color: #5C5A68;
+	margin-top: 2px;
+}
+
+.bizupkeep-stack-card ul {
+	margin: 16px 0 0;
+	padding-left: 18px;
+	font-size: 14.5px;
+	color: #3F3D4B;
+}
+
+.bizupkeep-stack-card li {
+	margin-bottom: 6px;
+}
+
+.bizupkeep-stack-equals-row {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 10px 0 24px;
+	gap: 14px;
+}
+
+.bizupkeep-stack-eq {
+	font-family: 'Space Grotesk', sans-serif;
+	font-size: 24px;
+	font-weight: 700;
+	color: var(--bizupkeep-ink);
+}
+
+.bizupkeep-stack-arrow-line {
+	flex: 1;
+	height: 2px;
+	background: rgba(27, 26, 46, 0.10);
+	max-width: 80px;
+}
+
+.bizupkeep-stack-bundle-card {
+	border: 2px solid var(--bizupkeep-ink);
+	border-radius: 6px;
+	padding: 30px 32px;
+	background: var(--bizupkeep-gold);
+	position: relative;
+	margin-bottom: 56px;
+}
+
+.bizupkeep-stack-bundle-card .bizupkeep-stack-badge {
+	display: inline-block;
+	background: var(--bizupkeep-ink);
+	color: var(--bizupkeep-gold);
+	font-size: 13px;
+	font-weight: 700;
+	padding: 5px 12px;
+	border-radius: 3px;
+	margin-bottom: 14px;
+}
+
+.bizupkeep-stack-bundle-card .bizupkeep-stack-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-end;
+	flex-wrap: wrap;
+	gap: 16px;
+}
+
+.bizupkeep-stack-bundle-card .bizupkeep-stack-tier-name {
+	font-size: 16px;
+	color: #403610;
+}
+
+.bizupkeep-stack-bundle-card .bizupkeep-stack-tier-price {
+	font-size: 36px;
+	margin-top: 6px;
+}
+
+.bizupkeep-stack-bundle-card .bizupkeep-stack-tier-price span {
+	font-size: 16px;
+	color: #403610;
+}
+
+.bizupkeep-stack-bundle-card .bizupkeep-stack-save {
+	font-size: 14px;
+	color: #403610;
+	font-weight: 600;
+}
+
+.bizupkeep-stack-bundle-card ul {
+	margin: 20px 0 0;
+	padding-left: 18px;
+	font-size: 15px;
+	color: #332B0C;
+	columns: 2;
+	column-gap: 28px;
+}
+
+@media (max-width: 560px) {
+	.bizupkeep-stack-bundle-card ul {
+		columns: 1;
+	}
+}
+
+.bizupkeep-stack-bundle-card li {
+	margin-bottom: 7px;
+	break-inside: avoid;
+}
+
+.bizupkeep-stack-scale-card {
+	border: 2px solid var(--bizupkeep-violet);
+	border-radius: 6px;
+	padding: 28px 32px;
+	background: var(--bizupkeep-violet-soft);
+}
+
+.bizupkeep-stack-scale-card .bizupkeep-stack-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-end;
+	flex-wrap: wrap;
+	gap: 16px;
+}
+
+.bizupkeep-stack-scale-card .bizupkeep-stack-tier-price {
+	font-size: 26px;
+	color: var(--bizupkeep-violet);
+}
+
+.bizupkeep-stack-scale-card p {
+	margin: 14px 0 0;
+	font-size: 14.5px;
+	color: #4C4A5A;
+	max-width: 60ch;
+}
+
+/* ---------- Why ---------- */
+.bizupkeep-stack-why {
+	background: var(--bizupkeep-tint-violet);
+}
+
+.bizupkeep-stack-why > h2 {
+	font-size: clamp(1.6rem, 3vw, 2.1rem);
+	max-width: 14ch;
+	margin-bottom: 36px;
+}
+
+.bizupkeep-stack-why-list {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 28px 48px;
+}
+
+@media (max-width: 640px) {
+	.bizupkeep-stack-why-list {
+		grid-template-columns: 1fr;
+	}
+}
+
+.bizupkeep-stack-why-list h3 {
+	font-size: 17px;
+	margin-bottom: 6px;
+}
+
+.bizupkeep-stack-why-list p {
+	margin: 0;
+	color: #4C4A5A;
+	font-size: 15px;
+}
+
+/* ---------- FAQ ---------- */
+.bizupkeep-stack-faq {
+	background: var(--bizupkeep-paper);
+}
+
+.bizupkeep-stack-faq > h2 {
+	font-size: clamp(1.6rem, 3vw, 2.1rem);
+	margin-bottom: 34px;
+}
+
+.bizupkeep-stack-faq-item {
+	border-top: 1px solid rgba(27, 26, 46, 0.10);
+	padding: 22px 0;
+}
+
+.bizupkeep-stack-faq-item:last-child {
+	border-bottom: 1px solid rgba(27, 26, 46, 0.10);
+}
+
+.bizupkeep-stack-faq-item h3 {
+	font-size: 16.5px;
+	margin-bottom: 8px;
+}
+
+.bizupkeep-stack-faq-item p {
+	margin: 0;
+	color: #4C4A5A;
+	font-size: 15px;
+	max-width: 60ch;
+}

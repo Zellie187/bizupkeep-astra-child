@@ -87,6 +87,8 @@ get_header();
 					);
 					?>
 				</p>
+			<?php elseif ( isset( $_GET['apply_error'] ) && 'consent_required' === $_GET['apply_error'] ) : ?>
+				<p class="bizupkeep-status-pill"><?php esc_html_e( 'Please accept the Terms & Conditions and Privacy Policy before submitting.', 'bizupkeep-astra-child' ); ?></p>
 			<?php elseif ( isset( $_GET['apply_error'] ) ) : ?>
 				<p class="bizupkeep-status-pill"><?php esc_html_e( 'Something went wrong - please check the form and try again.', 'bizupkeep-astra-child' ); ?></p>
 			<?php endif; ?>
@@ -180,6 +182,20 @@ get_header();
 
 					<template id="bizupkeep-director-template">
 						<?php bizupkeep_child_render_director_fields( 'director', '__INDEX__' ); ?>
+					</template>
+
+					<h3><?php esc_html_e( 'Shareholders', 'bizupkeep-astra-child' ); ?></h3>
+					<p class="bizupkeep-field-hint"><?php esc_html_e( 'At least one shareholder is required. Shares must add up to 100% across everyone listed.', 'bizupkeep-astra-child' ); ?></p>
+
+					<div class="bizupkeep-repeater" data-repeater="shareholder" data-max="10" data-template-id="bizupkeep-shareholder-template">
+						<div class="bizupkeep-repeater-blocks">
+							<?php bizupkeep_child_render_shareholder_fields( 'shareholder', 0 ); ?>
+						</div>
+						<button type="button" class="bizupkeep-btn bizupkeep-repeater-add"><?php esc_html_e( '+ Add Shareholder', 'bizupkeep-astra-child' ); ?></button>
+					</div>
+
+					<template id="bizupkeep-shareholder-template">
+						<?php bizupkeep_child_render_shareholder_fields( 'shareholder', '__INDEX__' ); ?>
 					</template>
 
 				</section>
@@ -292,6 +308,24 @@ get_header();
 				<p>
 					<label for="bizupkeep-notes"><?php esc_html_e( 'Anything else we should know? (optional)', 'bizupkeep-astra-child' ); ?></label>
 					<textarea id="bizupkeep-notes" name="notes" rows="4"></textarea>
+				</p>
+
+				<p class="bizupkeep-consent-field">
+					<label class="bizupkeep-type-option">
+						<input type="checkbox" name="consent_accepted" value="1" required>
+						<?php
+						printf(
+							/* translators: 1: Terms & Conditions link open tag, 2: link close tag, 3: Privacy Policy link open tag, 4: link close tag */
+							wp_kses(
+								__( 'I accept the %1$sTerms &amp; Conditions%2$s and %3$sPrivacy Policy%2$s.', 'bizupkeep-astra-child' ),
+								array( 'a' => array( 'href' => array(), 'target' => array(), 'rel' => array() ) )
+							),
+							'<a href="' . esc_url( home_url( '/terms-and-conditions/' ) ) . '" target="_blank" rel="noopener">',
+							'</a>',
+							'<a href="' . esc_url( home_url( '/privacy-policy/' ) ) . '" target="_blank" rel="noopener">'
+						);
+						?>
+					</label>
 				</p>
 
 				<p>

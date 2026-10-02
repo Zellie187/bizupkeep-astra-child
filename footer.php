@@ -10,6 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 ?>
 	<footer id="bizupkeep-footer" class="bizupkeep-footer">
+
 		<div class="bizupkeep-footer-inner">
 
 			<div class="bizupkeep-footer-columns">
@@ -32,6 +33,22 @@ if ( ! defined( 'ABSPATH' ) ) {
 					?>
 				</div>
 
+				<div class="bizupkeep-footer-column bizupkeep-footer-contact">
+					<h3 class="bizupkeep-footer-heading"><?php esc_html_e( 'Get In Touch', 'bizupkeep-astra-child' ); ?></h3>
+					<p>
+						<?php esc_html_e( 'Phone:', 'bizupkeep-astra-child' ); ?>
+						<a href="tel:+27615138895">061 513 8895</a>
+					</p>
+					<p>
+						<?php esc_html_e( 'Email:', 'bizupkeep-astra-child' ); ?>
+						<a href="mailto:info@bizupkeep.co.za">info@bizupkeep.co.za</a>
+					</p>
+					<p>
+						<?php esc_html_e( 'WhatsApp:', 'bizupkeep-astra-child' ); ?>
+						<a href="https://wa.me/27615138895">061 513 8895</a>
+					</p>
+				</div>
+
 				<div class="bizupkeep-footer-column bizupkeep-footer-widgets">
 					<?php if ( is_active_sidebar( 'bizupkeep-footer-widgets' ) ) : ?>
 						<?php dynamic_sidebar( 'bizupkeep-footer-widgets' ); ?>
@@ -42,6 +59,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 			<div class="bizupkeep-footer-bottom">
 				<p>
 					&copy; <?php echo esc_html( gmdate( 'Y' ) ); ?> <?php bloginfo( 'name' ); ?>. <?php esc_html_e( 'All rights reserved.', 'bizupkeep-astra-child' ); ?>
+				</p>
+				<p class="bizupkeep-footer-legal-links">
+					<a href="<?php echo esc_url( home_url( '/privacy-policy/' ) ); ?>"><?php esc_html_e( 'Privacy Policy', 'bizupkeep-astra-child' ); ?></a>
+					·
+					<a href="<?php echo esc_url( home_url( '/terms-and-conditions/' ) ); ?>"><?php esc_html_e( 'Terms & Conditions', 'bizupkeep-astra-child' ); ?></a>
+					·
+					<a href="<?php echo esc_url( home_url( '/refund-policy/' ) ); ?>"><?php esc_html_e( 'Refund Policy', 'bizupkeep-astra-child' ); ?></a>
 				</p>
 			</div>
 

@@ -47,6 +47,7 @@ use BizHub\Companies\Contracts\DirectorRepositoryInterface;
 use BizHub\Companies\DTO\AddressData;
 use BizHub\Companies\DTO\CompanyData;
 use BizHub\Companies\DTO\DirectorData;
+use BizHub\Companies\DTO\ShareholderData;
 use BizHub\Companies\Entities\Company;
 use BizHub\Companies\Entities\CompanyStatus;
 use BizHub\Documents\Entities\DocumentCategory;
@@ -65,7 +66,7 @@ use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 use BizUpKeep\Core\Contracts\ServiceRepositoryInterface;
 use BizUpKeep\Core\Enums\ServiceVatTreatment;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.37.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.44.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -129,6 +130,7 @@ function bizupkeep_child_register_page_templates( array $templates ): array {
 	$templates['page-templates/template-documents.php']   = __( 'BizUpKeep My Documents', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-applications.php'] = __( 'BizUpKeep My Applications', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-profile.php']     = __( 'BizUpKeep My Profile', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-startup-stack.php'] = __( 'BizUpKeep Startup Stack', 'bizupkeep-astra-child' );
 
 	return $templates;
 }
@@ -457,6 +459,119 @@ function bizupkeep_child_get_or_create_primary_menu(): int {
 	set_theme_mod( 'nav_menu_locations', $locations );
 
 	return $menu_id;
+}
+
+/**
+ * Add "FAQ" and "Contact" items to the site's main menu if they're not
+ * already there - matched by URL (same idempotent approach as
+ * bizupkeep_child_sync_client_portal_menu()) so this is safe to run on
+ * every request without ever duplicating, and deliberately does not
+ * touch, reorder, or remove any item staff have added themselves
+ * (e.g. a "Company Registration & Amendments" item) - it only ever
+ * appends what's missing.
+ */
+add_action( 'init', 'bizupkeep_child_sync_primary_menu_faq_contact' );
+
+function bizupkeep_child_sync_primary_menu_faq_contact(): void {
+	$menu_id = bizupkeep_child_get_or_create_primary_menu();
+
+	if ( 0 === $menu_id ) {
+		return;
+	}
+
+	$targets = array(
+		__( 'FAQ', 'bizupkeep-astra-child' )     => home_url( '/#bizupkeep-homepage-faq' ),
+		__( 'Contact', 'bizupkeep-astra-child' ) => home_url( '/contact-us/' ),
+	);
+
+	$existing_items = wp_get_nav_menu_items( $menu_id ) ?: array();
+	$existing_urls  = array();
+
+	foreach ( $existing_items as $item ) {
+		$existing_urls[] = untrailingslashit( $item->url );
+	}
+
+	$top_level_count = 0;
+
+	foreach ( $existing_items as $item ) {
+		if ( 0 === (int) $item->menu_item_parent ) {
+			$top_level_count++;
+		}
+	}
+
+	foreach ( $targets as $title => $url ) {
+		if ( in_array( untrailingslashit( $url ), $existing_urls, true ) ) {
+			continue;
+		}
+
+		$top_level_count++;
+
+		wp_update_nav_menu_item(
+			$menu_id,
+			0,
+			array(
+				'menu-item-title'    => $title,
+				'menu-item-url'      => $url,
+				'menu-item-type'     => 'custom',
+				'menu-item-status'   => 'publish',
+				'menu-item-position' => $top_level_count,
+			)
+		);
+	}
+}
+
+/**
+ * Footer "Quick Links" menu - populated only if the bizupkeep-footer
+ * location has no menu assigned at all yet (confirmed empty on the
+ * live site: the "Quick Links" heading rendered with nothing under
+ * it). Unlike the primary menu, nothing here is staff-authored yet,
+ * so this creates the whole menu rather than just appending missing
+ * items.
+ */
+add_action( 'init', 'bizupkeep_child_maybe_setup_footer_menu' );
+
+function bizupkeep_child_maybe_setup_footer_menu(): void {
+	$locations = get_theme_mod( 'nav_menu_locations', array() );
+
+	if ( ! empty( $locations['bizupkeep-footer'] ) && wp_get_nav_menu_object( (int) $locations['bizupkeep-footer'] ) ) {
+		return;
+	}
+
+	$menu_name = __( 'Footer Menu', 'bizupkeep-astra-child' );
+	$menu      = wp_get_nav_menu_object( $menu_name );
+	$menu_id   = $menu ? $menu->term_id : wp_create_nav_menu( $menu_name );
+
+	if ( is_wp_error( $menu_id ) || 0 === $menu_id ) {
+		return;
+	}
+
+	$items = array(
+		__( 'Pricing', 'bizupkeep-astra-child' )       => home_url( '/#bizupkeep-homepage-pricing' ),
+		__( 'FAQ', 'bizupkeep-astra-child' )            => home_url( '/#bizupkeep-homepage-faq' ),
+		__( 'Startup Stack', 'bizupkeep-astra-child' )  => home_url( '/startup-stack/' ),
+		__( 'Contact', 'bizupkeep-astra-child' )        => home_url( '/contact-us/' ),
+	);
+
+	$position = 1;
+
+	foreach ( $items as $title => $url ) {
+		wp_update_nav_menu_item(
+			$menu_id,
+			0,
+			array(
+				'menu-item-title'    => $title,
+				'menu-item-url'      => $url,
+				'menu-item-type'     => 'custom',
+				'menu-item-status'   => 'publish',
+				'menu-item-position' => $position,
+			)
+		);
+
+		++$position;
+	}
+
+	$locations['bizupkeep-footer'] = $menu_id;
+	set_theme_mod( 'nav_menu_locations', $locations );
 }
 
 /**
@@ -790,6 +905,374 @@ function bizupkeep_child_split_user_name( WP_User $wp_user ): array {
 }
 
 /**
+ * Homepage (hero/pricing/why-us/FAQ landing page).
+ *
+ * template-homepage.php has been registered as a selectable page
+ * template (bizupkeep_child_register_page_templates()) since this
+ * theme's first version, but nothing ever created a Page using it or
+ * set it as the site's static front page - a real gap found by
+ * activating this theme on a genuinely clean WordPress install and
+ * seeing the default "Hello world!" blog index instead, since a fresh
+ * WordPress site's Reading setting defaults to "Your latest posts".
+ * This closes that gap the same idempotent way
+ * bizupkeep_child_setup_apply_page()/bizupkeep_child_setup_contact_page()
+ * already create their pages on activation.
+ */
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_homepage' );
+add_action( 'init', 'bizupkeep_child_maybe_add_homepage' );
+
+/**
+ * One-time re-run for sites that activated the theme before this fix
+ * existed - bizupkeep_child_setup_homepage() only runs on
+ * after_switch_theme, which doesn't fire again just from deploying
+ * updated theme files, so this creates the missing page (and sets it
+ * as the front page) once via a stored option flag, mirroring
+ * bizupkeep_child_maybe_add_contact_page()'s approach for the same
+ * underlying problem.
+ */
+function bizupkeep_child_maybe_add_homepage(): void {
+	if ( get_option( 'bizupkeep_child_homepage_added' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_homepage();
+
+	update_option( 'bizupkeep_child_homepage_added', '1' );
+}
+
+/**
+ * Idempotently create the "Home" page, assign it the homepage
+ * template, and set it as the static front page - but only if the
+ * site doesn't already have a static front page configured, so this
+ * never overrides a deliberate choice made later in wp-admin (e.g. if
+ * staff reassign the front page to something else, re-activating the
+ * theme won't silently put it back).
+ */
+function bizupkeep_child_setup_homepage(): void {
+	$home_id = bizupkeep_child_get_or_create_page( 'home', __( 'Home', 'bizupkeep-astra-child' ), '', 0 );
+
+	if ( 0 === $home_id ) {
+		return;
+	}
+
+	update_post_meta( $home_id, '_wp_page_template', 'page-templates/template-homepage.php' );
+
+	if ( 'page' !== get_option( 'show_on_front' ) || ! get_option( 'page_on_front' ) ) {
+		update_option( 'show_on_front', 'page' );
+		update_option( 'page_on_front', $home_id );
+	}
+}
+
+/**
+ * Homepage SEO fixes (Yoast-specific): the front page's canonical was
+ * pointing at /home/ (its own permalink, since the "Home" page's slug
+ * is literally "home") instead of the site root /, making Google see
+ * two copies of the homepage; and no meta description was set at all.
+ *
+ * Both filters only ever act as a fallback/correction for the front
+ * page specifically - they never touch any other page, and the
+ * description filter only fills in a value when Yoast's own computed
+ * one is empty, so a real description entered later via the Yoast
+ * meta box always wins.
+ */
+add_filter( 'wpseo_canonical', 'bizupkeep_child_fix_front_page_canonical' );
+
+function bizupkeep_child_fix_front_page_canonical( $canonical ) {
+	return is_front_page() ? home_url( '/' ) : $canonical;
+}
+
+add_filter( 'wpseo_metadesc', 'bizupkeep_child_fallback_front_page_metadesc' );
+
+function bizupkeep_child_fallback_front_page_metadesc( $metadesc ) {
+	if ( '' !== $metadesc || ! is_front_page() ) {
+		return $metadesc;
+	}
+
+	return __( 'CIPC-compliant company registration and business compliance services, handled online from start to finish. Register your company from R600.', 'bizupkeep-astra-child' );
+}
+
+/**
+ * One-time cleanup of WordPress's default starter content ("Hello
+ * world!" post + its sample comment, "Sample Page") - found still
+ * live and indexed by Google on the real site. Trashed rather than
+ * force-deleted (recoverable if this is ever wrong), matched by the
+ * exact default slugs WordPress itself creates them with
+ * ("hello-world"/"sample-page"), and guarded by a one-time option
+ * flag so this never repeats or interferes with any future content
+ * that happens to reuse those slugs.
+ */
+add_action( 'init', 'bizupkeep_child_maybe_cleanup_starter_content' );
+
+function bizupkeep_child_maybe_cleanup_starter_content(): void {
+	if ( get_option( 'bizupkeep_child_starter_content_cleaned' ) ) {
+		return;
+	}
+
+	$hello_world = get_page_by_path( 'hello-world', OBJECT, 'post' );
+
+	if ( $hello_world instanceof WP_Post ) {
+		$comments = get_comments( array( 'post_id' => $hello_world->ID ) );
+
+		foreach ( $comments as $comment ) {
+			wp_delete_comment( $comment->comment_ID, true );
+		}
+
+		wp_trash_post( $hello_world->ID );
+	}
+
+	$sample_page = get_page_by_path( 'sample-page', OBJECT, 'page' );
+
+	if ( $sample_page instanceof WP_Post ) {
+		wp_trash_post( $sample_page->ID );
+	}
+
+	update_option( 'bizupkeep_child_starter_content_cleaned', '1' );
+}
+
+/**
+ * For a logged-out visitor, collapse the "Client Portal" dropdown
+ * down to a single item pointing straight at the (now-branded) login
+ * page, instead of exposing all five sub-pages (Dashboard/My
+ * Companies/My Documents/My Applications/My Bookkeeping/My Profile) -
+ * every one of which led to the exact same login page anyway. A
+ * logged-in client still sees the full dropdown as normal; this only
+ * changes what a logged-out visitor sees.
+ */
+add_filter( 'wp_nav_menu_objects', 'bizupkeep_child_collapse_portal_menu_for_guests' );
+
+function bizupkeep_child_collapse_portal_menu_for_guests( array $items ): array {
+	if ( is_user_logged_in() ) {
+		return $items;
+	}
+
+	$dashboard_id = bizupkeep_child_find_page( 'client-portal', 0 );
+
+	if ( 0 === $dashboard_id ) {
+		return $items;
+	}
+
+	$dashboard_url = get_permalink( $dashboard_id );
+
+	if ( false === $dashboard_url ) {
+		return $items;
+	}
+
+	$parent_id = 0;
+
+	foreach ( $items as $item ) {
+		if ( 'custom' === $item->type && 0 === (int) $item->menu_item_parent && untrailingslashit( $item->url ) === untrailingslashit( $dashboard_url ) ) {
+			$parent_id = $item->ID;
+			$item->url = wp_login_url( $dashboard_url );
+			break;
+		}
+	}
+
+	if ( 0 === $parent_id ) {
+		return $items;
+	}
+
+	return array_values(
+		array_filter(
+			$items,
+			static function ( $item ) use ( $parent_id ) {
+				return (int) $item->menu_item_parent !== $parent_id;
+			}
+		)
+	);
+}
+
+/**
+ * Client Portal login branding. wp-login.php shipped completely
+ * unbranded ("Log In ‹ Bizupkeep — WordPress", the stock WordPress
+ * logo, "Powered by WordPress" in the footer) with no explanation
+ * that an account is created automatically when someone applies for
+ * a service - so a returning client had no idea they already had an
+ * account, or what to expect from this page at all.
+ */
+add_action( 'login_enqueue_scripts', 'bizupkeep_child_login_branding' );
+
+function bizupkeep_child_login_branding(): void {
+	?>
+	<style>
+		body.login {
+			background: #FFFDF8;
+		}
+		body.login #login h1 a {
+			background-image: url('<?php echo esc_url( get_stylesheet_directory_uri() . '/assets/images/logo-light.svg' ); ?>');
+			background-size: contain;
+			width: 240px;
+			height: 60px;
+		}
+		body.login form {
+			border-radius: 14px;
+			box-shadow: 0 8px 24px rgba(27, 26, 46, 0.10);
+		}
+		body.login .button-primary {
+			background: #1B1A2E;
+			border-color: #1B1A2E;
+			border-radius: 999px;
+			text-shadow: none;
+			box-shadow: none;
+		}
+		body.login .button-primary:hover,
+		body.login .button-primary:focus {
+			background: #2c2a47;
+			border-color: #2c2a47;
+		}
+		body.login #backtoblog a,
+		body.login #nav a {
+			color: #1B1A2E;
+		}
+		body.login .message {
+			border-left: 4px solid #FF5A5F;
+		}
+	</style>
+	<?php
+}
+
+add_filter( 'login_headerurl', 'bizupkeep_child_login_header_url' );
+
+function bizupkeep_child_login_header_url(): string {
+	return home_url( '/' );
+}
+
+add_filter( 'login_headertext', 'bizupkeep_child_login_header_text' );
+
+function bizupkeep_child_login_header_text(): string {
+	return get_bloginfo( 'name' );
+}
+
+add_filter( 'login_title', 'bizupkeep_child_login_title' );
+
+function bizupkeep_child_login_title( string $login_title ): string {
+	return str_replace( ' — WordPress', '', $login_title );
+}
+
+add_filter( 'login_message', 'bizupkeep_child_login_message' );
+
+function bizupkeep_child_login_message( string $message ): string {
+	$notice = '<p class="message">' . esc_html__( 'Applied for a service with us before? Your Client Portal account was created automatically at that time - log in with the same email address. Forgotten your password? Use the link below to reset it.', 'bizupkeep-astra-child' ) . '</p>';
+
+	return $notice . $message;
+}
+
+/**
+ * Blocks author archive pages (/author/{username}/) outright - these
+ * leak the admin's real login username, making brute-force login
+ * attempts easier. Redirects to the homepage regardless of whether
+ * Yoast's own "disable author archives" setting has been turned on,
+ * so this holds even if that setting is ever missed or reset.
+ */
+add_action( 'template_redirect', 'bizupkeep_child_block_author_archives' );
+
+function bizupkeep_child_block_author_archives(): void {
+	if ( is_author() ) {
+		wp_safe_redirect( home_url( '/' ), 301 );
+		exit;
+	}
+}
+
+/**
+ * Startup Stack landing page (the bookkeeping + socials + tech
+ * support subscription bundle - a separate offering from the one-off
+ * CIPC services on the main homepage). Same idempotent
+ * activation/one-time-migration pattern as the other auto-created
+ * pages. Not automatically added to the primary nav menu, same as
+ * Apply/Contact - staff can add it via Appearance -> Menus once
+ * they're ready to promote it.
+ */
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_startup_stack_page' );
+add_action( 'init', 'bizupkeep_child_maybe_add_startup_stack_page' );
+
+function bizupkeep_child_maybe_add_startup_stack_page(): void {
+	if ( get_option( 'bizupkeep_child_startup_stack_page_added' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_startup_stack_page();
+
+	update_option( 'bizupkeep_child_startup_stack_page_added', '1' );
+}
+
+function bizupkeep_child_setup_startup_stack_page(): void {
+	$page_id = bizupkeep_child_get_or_create_page( 'startup-stack', __( 'Startup Stack', 'bizupkeep-astra-child' ), '', 0 );
+
+	if ( 0 === $page_id ) {
+		return;
+	}
+
+	update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-startup-stack.php' );
+}
+
+/**
+ * Legal pages (Privacy Policy, Terms & Conditions, Refund Policy).
+ *
+ * The three policy documents have existed as pre-styled HTML fragments
+ * in legal-pages/ since early in this theme's life, but nothing ever
+ * published them as real WordPress pages - the footer and the Apply
+ * form's consent checkbox both link to /privacy-policy/,
+ * /terms-and-conditions/ and /refund-policy/, but until this all
+ * three 404'd. This publishes each fragment's content verbatim as
+ * that page's content, wrapped in a Custom HTML block, using the same
+ * idempotent create-once pattern as every other auto-created page in
+ * this theme.
+ *
+ * Deliberately create-once: if a page already exists at one of these
+ * slugs (including one this same function created earlier), its
+ * content is never touched again - so a staff edit made directly in
+ * wp-admin (e.g. filling in the real physical address once known)
+ * survives every future reactivation/upgrade. To push a real update
+ * to the source fragment file's content, edit the live page directly
+ * in wp-admin - re-running this function will not overwrite it.
+ */
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_legal_pages' );
+add_action( 'init', 'bizupkeep_child_maybe_add_legal_pages' );
+
+function bizupkeep_child_maybe_add_legal_pages(): void {
+	if ( get_option( 'bizupkeep_child_legal_pages_added' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_legal_pages();
+
+	update_option( 'bizupkeep_child_legal_pages_added', '1' );
+}
+
+function bizupkeep_child_setup_legal_pages(): void {
+	$pages = array(
+		'privacy-policy'         => array(
+			'title' => __( 'Privacy Policy', 'bizupkeep-astra-child' ),
+			'file'  => 'A2Z_Privacy_Policy_fragment.html',
+		),
+		'terms-and-conditions'   => array(
+			'title' => __( 'Terms and Conditions', 'bizupkeep-astra-child' ),
+			'file'  => 'A2Z_Terms_and_Conditions_fragment.html',
+		),
+		'refund-policy'          => array(
+			'title' => __( 'Refund Policy', 'bizupkeep-astra-child' ),
+			'file'  => 'A2Z_Refund_Policy_fragment.html',
+		),
+	);
+
+	foreach ( $pages as $slug => $page ) {
+		if ( 0 !== bizupkeep_child_find_page( $slug, 0 ) ) {
+			continue;
+		}
+
+		$fragment_path = get_stylesheet_directory() . '/legal-pages/' . $page['file'];
+
+		if ( ! is_readable( $fragment_path ) ) {
+			continue;
+		}
+
+		$fragment_html = (string) file_get_contents( $fragment_path );
+		$content       = "<!-- wp:html -->\n" . $fragment_html . "\n<!-- /wp:html -->\n";
+
+		bizupkeep_child_get_or_create_page( $slug, $page['title'], $content, 0 );
+	}
+}
+
+/**
  * Apply page (Company Registration application intake).
  *
  * The header and homepage template's "Start Application" buttons have
@@ -963,6 +1446,14 @@ function bizupkeep_child_handle_apply_submission(): void {
 	}
 
 	check_admin_referer( 'bizupkeep_apply', 'bizupkeep_apply_nonce' );
+
+	// Consent is required before any account/workflow side effect below
+	// runs - checked first, ahead of guest account creation, so a
+	// missing checkbox fails fast without side effects.
+	if ( ! isset( $_POST['consent_accepted'] ) || '1' !== $_POST['consent_accepted'] ) {
+		wp_safe_redirect( add_query_arg( 'apply_error', 'consent_required', get_permalink() ) );
+		exit;
+	}
 
 	$guest_phone = isset( $_POST['guest_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['guest_phone'] ) ) : '';
 
@@ -1157,6 +1648,28 @@ function bizupkeep_child_submit_new_registration( int $wp_user_id, string $notes
 		$directors = array_slice( $directors, 0, 10 );
 	}
 
+	$shareholders = isset( $_POST['shareholder'] ) && is_array( $_POST['shareholder'] )
+		? bizupkeep_child_parse_shareholders_input( $_POST['shareholder'] )
+		: array();
+
+	if ( array() === $shareholders ) {
+		return false; // At least one shareholder is required.
+	}
+
+	if ( count( $shareholders ) > 10 ) {
+		$shareholders = array_slice( $shareholders, 0, 10 );
+	}
+
+	// Shares must add up to exactly 100% across everyone listed - a
+	// real company's shareholding structure can't do otherwise. Small
+	// float-rounding slack (0.01) allows for e.g. three-way 33.33/
+	// 33.33/33.34 splits without a false rejection.
+	$total_shares = array_sum( array_map( static fn ( ShareholderData $s ): float => $s->sharesPercentage, $shareholders ) );
+
+	if ( abs( $total_shares - 100.0 ) > 0.01 ) {
+		return false;
+	}
+
 	$clients = bizhub()->container()->get( ClientServiceInterface::class );
 
 	try {
@@ -1199,7 +1712,8 @@ function bizupkeep_child_submit_new_registration( int $wp_user_id, string $notes
 				__( 'Private Company (Pty) Ltd', 'bizupkeep-astra-child' ),
 				CompanyStatus::CREATED,
 				$address,
-				$directors
+				$directors,
+				$shareholders
 			)
 		);
 
@@ -1650,6 +2164,62 @@ function bizupkeep_child_parse_directors_input( array $raw ): array {
 }
 
 /**
+ * Parse a posted shareholder repeater (e.g. $_POST['shareholder'])
+ * into ShareholderData[] - same shape/skip-incomplete-rows convention
+ * as bizupkeep_child_parse_directors_input(). A row missing a full
+ * name, missing both ID and passport number, or with an unparseable
+ * shares percentage is silently skipped rather than rejecting the
+ * whole submission, consistent with how the director repeater
+ * behaves.
+ *
+ * @param array<int|string,mixed> $raw
+ * @return ShareholderData[]
+ */
+function bizupkeep_child_parse_shareholders_input( array $raw ): array {
+	$raw          = wp_unslash( $raw );
+	$shareholders = array();
+
+	foreach ( $raw as $entry ) {
+		if ( ! is_array( $entry ) ) {
+			continue;
+		}
+
+		$full_name = sanitize_text_field( $entry['full_name'] ?? '' );
+
+		if ( '' === $full_name ) {
+			continue;
+		}
+
+		$id_number       = sanitize_text_field( $entry['id_number'] ?? '' );
+		$passport_number = sanitize_text_field( $entry['passport_number'] ?? '' );
+
+		if ( '' === $id_number && '' === $passport_number ) {
+			continue;
+		}
+
+		if ( ! is_numeric( $entry['shares_percentage'] ?? '' ) ) {
+			continue;
+		}
+
+		$shares_percentage = (float) $entry['shares_percentage'];
+
+		if ( $shares_percentage < 0 || $shares_percentage > 100 ) {
+			continue;
+		}
+
+		$shareholders[] = new ShareholderData(
+			wp_generate_uuid4(),
+			$full_name,
+			'' !== $id_number ? $id_number : null,
+			'' !== $passport_number ? $passport_number : null,
+			$shares_percentage
+		);
+	}
+
+	return $shareholders;
+}
+
+/**
  * Parse a posted Annual Return filing repeater (e.g. $_POST['filing'],
  * an indexed array of {financial_year, turnover} blocks) into a clean
  * list of ['financial_year' => int, 'turnover' => float] pairs, for
@@ -1972,6 +2542,46 @@ function bizupkeep_child_render_director_fields( string $prefix, $index ): void 
 			<input type="email" name="<?php echo esc_attr( $base ); ?>[email]">
 		</p>
 		<?php bizupkeep_child_render_address_fields( $base . '[address]' ); ?>
+		<button type="button" class="bizupkeep-btn bizupkeep-repeater-remove"><?php esc_html_e( 'Remove', 'bizupkeep-astra-child' ); ?></button>
+	</div>
+	<?php
+}
+
+/**
+ * Render one Shareholder repeater block: full name, SA ID/passport
+ * number, and shares percentage under "{$prefix}[{$index}][...]",
+ * plus a Remove button - same $index convention as
+ * bizupkeep_child_render_director_fields() (a real index for the
+ * first block, the literal string "__INDEX__" for the <template> a
+ * new block is cloned from, replaced client-side by
+ * assets/js/custom.js).
+ *
+ * Registration-only: bizhub's Shareholder entity records a company's
+ * shareholding structure at incorporation, which isn't something a
+ * Company Amendment (Director/Name/Address change) ever touches.
+ *
+ * @param int|string $index
+ */
+function bizupkeep_child_render_shareholder_fields( string $prefix, $index ): void {
+	$base = sprintf( '%s[%s]', $prefix, $index );
+	?>
+	<div class="bizupkeep-shareholder-block">
+		<p>
+			<label><?php esc_html_e( 'Full Name', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[full_name]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'SA ID Number', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[id_number]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Passport Number (if not an SA citizen)', 'bizupkeep-astra-child' ); ?></label>
+			<input type="text" name="<?php echo esc_attr( $base ); ?>[passport_number]">
+		</p>
+		<p>
+			<label><?php esc_html_e( 'Shares (%)', 'bizupkeep-astra-child' ); ?></label>
+			<input type="number" name="<?php echo esc_attr( $base ); ?>[shares_percentage]" min="0" max="100" step="0.01">
+		</p>
 		<button type="button" class="bizupkeep-btn bizupkeep-repeater-remove"><?php esc_html_e( 'Remove', 'bizupkeep-astra-child' ); ?></button>
 	</div>
 	<?php
