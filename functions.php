@@ -66,7 +66,7 @@ use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 use BizUpKeep\Core\Contracts\ServiceRepositoryInterface;
 use BizUpKeep\Core\Enums\ServiceVatTreatment;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.44.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.45.0' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
@@ -131,6 +131,7 @@ function bizupkeep_child_register_page_templates( array $templates ): array {
 	$templates['page-templates/template-applications.php'] = __( 'BizUpKeep My Applications', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-profile.php']     = __( 'BizUpKeep My Profile', 'bizupkeep-astra-child' );
 	$templates['page-templates/template-startup-stack.php'] = __( 'BizUpKeep Startup Stack', 'bizupkeep-astra-child' );
+	$templates['page-templates/template-about.php']         = __( 'BizUpKeep About', 'bizupkeep-astra-child' );
 
 	return $templates;
 }
@@ -480,6 +481,7 @@ function bizupkeep_child_sync_primary_menu_faq_contact(): void {
 	}
 
 	$targets = array(
+		__( 'About', 'bizupkeep-astra-child' )   => home_url( '/about/' ),
 		__( 'FAQ', 'bizupkeep-astra-child' )     => home_url( '/#bizupkeep-homepage-faq' ),
 		__( 'Contact', 'bizupkeep-astra-child' ) => home_url( '/contact-us/' ),
 	);
@@ -549,6 +551,7 @@ function bizupkeep_child_maybe_setup_footer_menu(): void {
 		__( 'Pricing', 'bizupkeep-astra-child' )       => home_url( '/#bizupkeep-homepage-pricing' ),
 		__( 'FAQ', 'bizupkeep-astra-child' )            => home_url( '/#bizupkeep-homepage-faq' ),
 		__( 'Startup Stack', 'bizupkeep-astra-child' )  => home_url( '/startup-stack/' ),
+		__( 'About', 'bizupkeep-astra-child' )          => home_url( '/about/' ),
 		__( 'Contact', 'bizupkeep-astra-child' )        => home_url( '/contact-us/' ),
 	);
 
@@ -1202,6 +1205,33 @@ function bizupkeep_child_setup_startup_stack_page(): void {
 	}
 
 	update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-startup-stack.php' );
+}
+
+/**
+ * About page (/about/). Same idempotent create-once pattern as the
+ * Startup Stack page; content lives in the template itself.
+ */
+add_action( 'after_switch_theme', 'bizupkeep_child_setup_about_page' );
+add_action( 'init', 'bizupkeep_child_maybe_add_about_page' );
+
+function bizupkeep_child_maybe_add_about_page(): void {
+	if ( get_option( 'bizupkeep_child_about_page_added' ) ) {
+		return;
+	}
+
+	bizupkeep_child_setup_about_page();
+
+	update_option( 'bizupkeep_child_about_page_added', '1' );
+}
+
+function bizupkeep_child_setup_about_page(): void {
+	$page_id = bizupkeep_child_get_or_create_page( 'about', __( 'About', 'bizupkeep-astra-child' ), '', 0 );
+
+	if ( 0 === $page_id ) {
+		return;
+	}
+
+	update_post_meta( $page_id, '_wp_page_template', 'page-templates/template-about.php' );
 }
 
 /**

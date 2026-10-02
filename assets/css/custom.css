@@ -1314,3 +1314,31 @@ h1, h2, h3, h4, h5, h6,
 		display: none;
 	}
 }
+
+/* ==========================================================
+   About page (template-about.php)
+   ========================================================== */
+.bizupkeep-about { background: var(--bizupkeep-paper); color: var(--bizupkeep-ink); }
+.bizupkeep-about-inner { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+.bizupkeep-about-hero { padding: 72px 0 40px; background: var(--bizupkeep-tint-peach); }
+.bizupkeep-about-hero h1 { margin: 12px 0 16px; line-height: 1.15; }
+.bizupkeep-about-hero p { color: var(--bizupkeep-muted); font-size: 1.1rem; max-width: 640px; }
+.bizupkeep-about-section { padding: 48px 0; }
+.bizupkeep-about-section + .bizupkeep-about-section { border-top: 1px solid var(--bizupkeep-border); }
+.bizupkeep-about-section h2 { margin: 0 0 20px; }
+.bizupkeep-about-role { color: var(--bizupkeep-coral); font-weight: 600; margin: 0 0 8px; }
+.bizupkeep-about-person h3 { margin: 0 0 4px; }
+.bizupkeep-about-facts { display: grid; gap: 14px; margin: 0; }
+.bizupkeep-about-facts > div { background: #fff; border: 1px solid var(--bizupkeep-border); border-radius: var(--bizupkeep-radius); padding: 16px 20px; box-shadow: var(--bizupkeep-shadow-sm); }
+.bizupkeep-about-facts dt { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bizupkeep-muted); margin: 0 0 4px; }
+.bizupkeep-about-facts dd { margin: 0; font-weight: 600; }
+.bizupkeep-about-note { color: var(--bizupkeep-muted); margin: 16px 0 0; }
+.bizupkeep-about-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.bizupkeep-about-points li { background: var(--bizupkeep-bg-light); border-radius: var(--bizupkeep-radius); padding: 20px 22px; margin: 0; }
+.bizupkeep-about-points h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.bizupkeep-about-points p { margin: 0; color: var(--bizupkeep-muted); }
+.bizupkeep-about-ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.bizupkeep-about-contact a:not(.bizupkeep-btn) { color: var(--bizupkeep-ink); font-weight: 600; }
+@media (min-width: 720px) {
+	.bizupkeep-about-points { grid-template-columns: repeat(3, 1fr); }
+}
