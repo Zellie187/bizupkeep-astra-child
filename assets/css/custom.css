@@ -1332,6 +1332,7 @@ h1, h2, h3, h4, h5, h6,
 .bizupkeep-about-facts > div { background: #fff; border: 1px solid var(--bizupkeep-border); border-radius: var(--bizupkeep-radius); padding: 16px 20px; box-shadow: var(--bizupkeep-shadow-sm); }
 .bizupkeep-about-facts dt { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--bizupkeep-muted); margin: 0 0 4px; }
 .bizupkeep-about-facts dd { margin: 0; font-weight: 600; }
+.bizupkeep-about-facts dd + dd { margin-top: 6px; }
 .bizupkeep-about-note { color: var(--bizupkeep-muted); margin: 16px 0 0; }
 .bizupkeep-about-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
 .bizupkeep-about-points li { background: var(--bizupkeep-bg-light); border-radius: var(--bizupkeep-radius); padding: 20px 22px; margin: 0; }

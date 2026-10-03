@@ -7,10 +7,14 @@
  *                 the owner or already claimed elsewhere on the site
  *                 (homepage "Why Work With Us", legal documents). There
  *                 is no testimonials section because there are no
- *                 testimonials yet, and no founder photo or ICB
- *                 membership number until those are supplied - add them
- *                 here when they exist rather than showing placeholders
- *                 on a public page.
+ *                 testimonials yet, and no founder photo until one is
+ *                 supplied. Qualifications are worded exactly as the
+ *                 certificates read (ICB Financial Accounting Foundation
+ *                 Level programme completion, 19 March 2021; QuickBooks
+ *                 Online Accountant Certification, 15 February 2022) -
+ *                 do not upgrade this to "ICB-registered"/member
+ *                 without proof of membership, and do not publish
+ *                 certificate or ID numbers.
  *
  * @package BizUpKeep_Astra_Child
  */
@@ -54,6 +58,11 @@ get_header();
 				<div>
 					<dt><?php esc_html_e( 'Registered address', 'bizupkeep-astra-child' ); ?></dt>
 					<dd><?php esc_html_e( '949 Hertzog Street, Rietfontein, Pretoria', 'bizupkeep-astra-child' ); ?></dd>
+				</div>
+				<div>
+					<dt><?php esc_html_e( 'Qualifications', 'bizupkeep-astra-child' ); ?></dt>
+					<dd><?php esc_html_e( 'Financial Accounting, Foundation Level: Institute of Certified Bookkeepers (ICB), completed March 2021', 'bizupkeep-astra-child' ); ?></dd>
+					<dd><?php esc_html_e( 'QuickBooks Online Accountant Certification, February 2022', 'bizupkeep-astra-child' ); ?></dd>
 				</div>
 			</dl>
 			<p class="bizupkeep-about-note"><?php esc_html_e( 'We work online and do not run a public walk-in office, so please contact us by phone, WhatsApp or email.', 'bizupkeep-astra-child' ); ?></p>
