@@ -66,7 +66,7 @@ use BizHub\Workflow\Workflows\CompanyRegistration\CompanyRegistrationService;
 use BizUpKeep\Core\Contracts\ServiceRepositoryInterface;
 use BizUpKeep\Core\Enums\ServiceVatTreatment;
 
-define( 'BIZUPKEEP_CHILD_VERSION', '1.45.0' );
+define( 'BIZUPKEEP_CHILD_VERSION', '1.45.1' );
 define( 'BIZUPKEEP_CHILD_URI', get_stylesheet_directory_uri() );
 
 /**
